@@ -21,7 +21,7 @@ init()
 #' \dontrun{load_env("dwh", 123)
 #' selectq("select * from shop limit 10;")}
 selectq <- function(query, ...) {
-	if (!all(c("DB", "HOST", "PWD", "USER") %in% ls())) {
+	if (!all(c("DB", "HOST", "PWD", "USER") %in% ls(1))) {
 		init()
 		logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
 		return(data.table::data.table())
@@ -83,7 +83,7 @@ insert_query <-  function(host="localhost", port=3306, db, user, password, query
 #' \dontrun{load_env("dwh", 123)}
 #' \dontrun{data <- insert_table_safe(host=HOST, db=DB, user=user, password=pwd, query="select * from table;")}
 insert_table_safe <- function(table, table_name_in_base, ...) {
-	if (!all(c("DB", "HOST", "PWD", "USER") %in% ls())) {
+	if (!all(c("DB", "HOST", "PWD", "USER") %in% ls(1))) {
 		init()
 		logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
 		return(FALSE)
@@ -170,7 +170,7 @@ insert_source <- function(table, table_name_in_base, host="localhost", port=3306
 #' \dontrun{load_env("dwh", 123)}
 #' \dontrun{data <- insertq(host=HOST, db=DB, user=user, password=pwd, query="select * from table;")}
 insertq <- function(table, table_name_in_base, ...) {
-	if (!all(c("DB", "HOST", "PWD", "USER") %in% ls())) {
+	if (!all(c("DB", "HOST", "PWD", "USER") %in% ls(1))) {
 		init()
 		logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
 		return(FALSE)
@@ -210,7 +210,7 @@ delete_from_table <- function(table_name_in_base, where, host="localhost", port=
 #' @examples
 #' \dontrun{deleteq(table_name_in_base="foo", where="id < 10")}
 deleteq <- function(table_name_in_base, where, ...) {
-	if (!all(c("DB", "HOST", "PWD", "USER") %in% ls())) {
+	if (!all(c("DB", "HOST", "PWD", "USER") %in% ls(1))) {
 		init()
 		logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
 		return(FALSE)
@@ -309,7 +309,7 @@ insert_table <- function(table, table_name_in_base, host="localhost", port=3306,
 #' \dontrun{load_env("dwh", 123)}
 #' \dontrun{upsertq(iris, "iris_database_name")}
 upsertq <- function(table, table_name_in_base, ...) {
-	if (!all(c("DB", "HOST", "PWD", "USER") %in% ls())) {
+	if (!all(c("DB", "HOST", "PWD", "USER") %in% ls(1))) {
 		init()
 		logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
 		return(FALSE)
