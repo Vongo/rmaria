@@ -116,7 +116,7 @@ exec_query <-  function(host="localhost", port=3306, db, user, password, query) 
 #' @export
 #' @examples
 #' \dontrun{data <- insert_table_safe(host=HOST, db=DB, user=user, password=pwd, query="select * from table;")}
-insert_table_safe <- function(table, table_name_in_base, ...) {
+insert_table_safe <- function(table, table_name_in_base) {
 	if (!all(c("DB", "HOST", "PWD", "USER") %in% ls(1))) {
 		init()
 		logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
