@@ -15,10 +15,10 @@ init()
 #' @param query query to execute
 #' @param ... any argument that can be sent to `pull_data`
 #' @keywords mysql select
-#' @seealso insert_query pull_data
+#' @seealso exec_query pull_data
 #' @export
 #' @examples
-#' \dontrun{load_env("dwh", 123)
+#' \dontrun{
 #' selectq("select * from shop limit 10;")}
 selectq <- function(query, ...) {
 	if (!all(c("DB", "HOST", "PWD", "USER") %in% ls(1))) {
@@ -62,7 +62,42 @@ pull_data <- function(host="localhost", port=3306, db, user, password, query, sc
 		data.table::as.data.table()
 }
 
-insert_query <-  function(host="localhost", port=3306, db, user, password, query) {
+#' Exec
+#'
+#' Simple wrapper around `exec_query` method, that makes credential use transparent.
+#' Requires credentials to be loaded, obviously.
+#' @param query query to execute
+#' @param ... any argument that can be sent to `pull_data`
+#' @keywords mysql select
+#' @seealso exec_query pull_data
+#' @export
+#' @examples
+#' \dontrun{execq('set character set "utf8"')}
+execq <- function(query, ...) {
+	if (!all(c("DB", "HOST", "PWD", "USER") %in% ls(1))) {
+		init()
+		logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
+		return(NULL)
+	}
+	exec_query(host=HOST, db=DB, user=USER, password=PWD, query=query, ...)
+}
+
+
+#' Execute query
+#'
+#' Simple method that executes your query and doesn't return anything.
+#' @param host host
+#' @param port port
+#' @param db default database name
+#' @param user user
+#' @param password password
+#' @param query query to execute
+#' @keywords mysql delete create statement
+#' @seealso insert_table
+#' @export
+#' @examples
+#' \dontrun{data <- pull_data(host=HOST, db=DB, user=user, password=pwd, query="select * from table;")}
+exec_query <-  function(host="localhost", port=3306, db, user, password, query) {
 	con <- RMariaDB::dbConnect(RMariaDB::MariaDB(), user=user, password=password, dbname=db, host=host, port=port)
 	RMariaDB::dbExecute(con, 'set character set "utf8"')
 	RMariaDB::dbExecute(con, query)
@@ -80,7 +115,6 @@ insert_query <-  function(host="localhost", port=3306, db, user, password, query
 #' @seealso pull_data, selectq, insert_table, insertq
 #' @export
 #' @examples
-#' \dontrun{load_env("dwh", 123)}
 #' \dontrun{data <- insert_table_safe(host=HOST, db=DB, user=user, password=pwd, query="select * from table;")}
 insert_table_safe <- function(table, table_name_in_base, ...) {
 	if (!all(c("DB", "HOST", "PWD", "USER") %in% ls(1))) {
@@ -106,7 +140,6 @@ insert_table_safe <- function(table, table_name_in_base, ...) {
 #' @keywords mysql delete
 #' @export
 #' @examples
-#' \dontrun{load_env("dwh", 123)}
 #' \dontrun{truncate_table(table="foo", host=HOST, db=DB, user=USER, password=PWD)}
 truncate_table <- function(table_name_in_base, host="localhost", port=3306, db, user, password) {
 	init()
@@ -167,7 +200,6 @@ insert_source <- function(table, table_name_in_base, host="localhost", port=3306
 #' @seealso pull_data, selectq, insert_table
 #' @export
 #' @examples
-#' \dontrun{load_env("dwh", 123)}
 #' \dontrun{data <- insertq(host=HOST, db=DB, user=user, password=pwd, query="select * from table;")}
 insertq <- function(table, table_name_in_base, ...) {
 	if (!all(c("DB", "HOST", "PWD", "USER") %in% ls(1))) {
@@ -195,8 +227,7 @@ insertq <- function(table, table_name_in_base, ...) {
 delete_from_table <- function(table_name_in_base, where, host="localhost", port=3306, db, user, password) {
 	con <- RMariaDB::dbConnect(RMariaDB::MariaDB(), user=user, password=password, dbname=db, host=host, port=port)
 	RMariaDB::dbExecute(con, 'set character set "utf8"')
-	res <- suppressWarnings(RMariaDB::dbExecute(con, paste0("DELETE FROM ", table_name_in_base, " WHERE ", where)))
-	RMariaDB::dbClearResult(res)
+	suppressWarnings(RMariaDB::dbExecute(con, paste0("DELETE FROM ", table_name_in_base, " WHERE ", where)))
 	RMariaDB::dbDisconnect(con)
 }
 
@@ -282,7 +313,7 @@ insert_table <- function(table, table_name_in_base, host="localhost", port=3306,
 		}
 		query <- gsub("\"Qù@ñÐĲ€T@IS©H€ZMŒZI//@\"", "NULL",  paste0(query, paste0(vals, collapse=',')))
 		tryCatch(
-			{insert_query(host, port, db, user, password, query)},
+			{exec_query(host, port, db, user, password, query)},
 			warn=function(w) {
 				if (!nolog) logging::logwarn("Warning while inserting query [%s]: [%s]", query, w, logger=LOGGER.MAIN)
 			},
@@ -306,7 +337,6 @@ insert_table <- function(table, table_name_in_base, host="localhost", port=3306,
 #' @seealso pull_data, selectq, upsert_table, insertq, insert_table
 #' @export
 #' @examples
-#' \dontrun{load_env("dwh", 123)}
 #' \dontrun{upsertq(iris, "iris_database_name")}
 upsertq <- function(table, table_name_in_base, ...) {
 	if (!all(c("DB", "HOST", "PWD", "USER") %in% ls(1))) {
@@ -382,7 +412,7 @@ upsert_table <- function(table, table_name_in_base, keycols, host="localhost", p
 		)
 		query <- paste0(prefix, gsub("\"Qù@ñÐĲ€T@IS©H€ZMŒZI//@\"", "NULL",  values), suffix, ";")
 		tryCatch(
-			{insert_query(host, port, db, user, password, query)},
+			{exec_query(host, port, db, user, password, query)},
 			warn=function(w) {
 				if (!nolog) logging::logwarn("Warning while upserting query [%s]: [%s]", query, w, logger=LOGGER.MAIN)
 			},

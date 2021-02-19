@@ -30,7 +30,6 @@ truncate_table(
 Empties table from all observations, but doesn't delete it.
 }
 \examples{
-\dontrun{load_env("dwh", 123)}
 \dontrun{truncate_table(table="foo", host=HOST, db=DB, user=USER, password=PWD)}
 }
 \keyword{delete}

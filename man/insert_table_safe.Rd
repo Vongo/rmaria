@@ -20,7 +20,6 @@ Simple method that inserts the input data.frame or data.table into the designate
 It's important to be aware that both input table and table in database should have the same schema (matching names, matching types). The difference between insertq and insert_table_safe is that insertq will split data in smaller groups, and insert_table_safe will just rely on the engine. Also, \code{insertq} uses homemade INSERTS statements.
 }
 \examples{
-\dontrun{load_env("dwh", 123)}
 \dontrun{data <- insert_table_safe(host=HOST, db=DB, user=user, password=pwd, query="select * from table;")}
 }
 \seealso{

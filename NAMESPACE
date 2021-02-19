@@ -2,6 +2,8 @@
 
 export(delete_from_table)
 export(deleteq)
+export(exec_query)
+export(execq)
 export(insert_table)
 export(insert_table_safe)
 export(insertq)
