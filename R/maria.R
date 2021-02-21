@@ -15,7 +15,7 @@ init()
 #' @param query query to execute
 #' @param ... any argument that can be sent to `pull_data`
 #' @keywords mysql select
-#' @seealso exec_query pull_data
+#' @seealso execq pull_data
 #' @export
 #' @examples
 #' \dontrun{
@@ -124,22 +124,8 @@ insert_table_safe <- function(table, table_name_in_base) {
 	}
 	library(RMariaDB)
 	con <- RMariaDB::dbConnect(RMariaDB::MariaDB(), host=HOST, db=DB, user=USER, password=PWD, port=3306)
-	append_to_table(con, table_name_in_base, table)
+	RMySQL::dbAppendTable(con, table_name_in_base, table)
 	RMariaDB::dbDisconnect(con)
-}
-
-# Temporarily (and shamelessly) copied from https://github.com/r-dbi/RMariaDB/issues/162#issuecomment-666435502
-append_to_table = function(con, name, df) {
-	f <- tempfile()
-	dbFields = dbListFields(con, name)
-	for (dbField in dbFields) {
-		if (!(dbField %in% colnames(df))) {
-			df[[dbField]] = NA
-		}
-	}
-	df <- df %>% select(dbFields)
-	write.csv(df, file=f, row.names=F, na="NULL", fileEncoding="UTF-8")
-	dbWriteTable(con, name, f, append=T, eol="\r\n")
 }
 
 #' Truncate table
@@ -187,20 +173,6 @@ insert_source_full_file <- function(src, host="localhost", port=3306, db, user, 
 	dbExecute(con, query)
 	file.remove(path)
 	RMariaDB::dbDisconnect(con)
-}
-
-insert_summary <- function(table, table_name_in_base, run_date=format(Sys.time(), "%Y-%m-%d %H:%M:%S"), host="localhost", port=3306, db, user, password, chunk_size=100, progress_bar=TRUE) {
-	table$run_date <- run_date
-	insert_table(table=table, table_name_in_base=table_name_in_base, host=host,
-		port=port, db=db, user=user, password=password, chunk_size=chunk_size,
-		progress_bar=progress_bar)
-}
-
-insert_source <- function(table, table_name_in_base, host="localhost", port=3306, db, user, password, chunk_size=100, progress_bar=TRUE) {
-	truncate_table(table_name_in_base, host=host, port=port, db=db, user=user, password=password)
-	insert_table(table=table, table_name_in_base=table_name_in_base, host=host,
-		port=port, db=db, user=user, password=password, chunk_size=chunk_size,
-		progress_bar=progress_bar)
 }
 
 #' Simplified insert
@@ -270,7 +242,7 @@ esq <- function(str) {
 }
 
 # Escape double quotes
-edq <-  function(str) {
+edq <- function(str) {
 	gsub("\"", "\\\\'", str)
 }
 
@@ -304,13 +276,14 @@ insert_table <- function(table, table_name_in_base, host="localhost", port=3306,
 	if (is.na(chunk_size)) {
 		chunk_size <- max(min(10000, nrow(table)/25), 100)
 	}
+	chunk_size <- min(chunk_size, nrow(table))
 	n_iter <- ceiling(nrow(table)/chunk_size)
 	has_quotes <- sapply(seq(ncol(table)), function(ic) !(is.numeric(table[,ic]) || is.logical(table[,ic])))
 	pb <- if(progress_bar) create_pb(n_iter, bar_style="pc", time_style="cd") else NULL
 	for (i in seq(n_iter)) {
 		query <- paste0("INSERT ", `if`(ignore, "IGNORE ", ""), "INTO ", table_name_in_base, "(",
 			paste0(colnames(table), collapse=","), ") VALUES ")
-		vals <- NULL
+		vals <- character(0)
 		for (j in seq(chunk_size)) {
 			k <- (i-1)*chunk_size+j
 			if (k <= nrow(table)) {
@@ -319,15 +292,16 @@ insert_table <- function(table, table_name_in_base, host="localhost", port=3306,
 						sapply(seq(ncol(table)), function(ic) {
 							if ((table[k, ic] %>% {is.na(.) || is.nan(.) || (is.numeric(.) && !is.finite(.))})) {
 								"\"Qù@ñÐĲ€T@IS©H€ZMŒZI//@\""
-							} else `if`(has_quotes[ic], paste0("'", gsub("'", '"', table[i, ic]), "'"), table[i, ic])
+							} else `if`(has_quotes[ic], paste0("'", gsub("'", '"', table[k, ic]), "'"), table[k, ic])
 						}), collapse=","
 					), ")"
 				)
 			}
 		}
-		query <- gsub("\"Qù@ñÐĲ€T@IS©H€ZMŒZI//@\"", "NULL",  paste0(query, paste0(vals, collapse=',')))
-		tryCatch(
-			{exec_query(host, port, db, user, password, query)},
+		query <- gsub("\"Qù@ñÐĲ€T@IS©H€ZMŒZI//@\"", "NULL", paste0(query, paste0(vals, collapse=',')))
+		tryCatch({
+				exec_query(host=host, port=port, db=db, user=user, password=password, query=query)
+			},
 			warn=function(w) {
 				if (!nolog) logging::logwarn("Warning while inserting query [%s]: [%s]", query, w, logger=LOGGER.MAIN)
 			},
@@ -424,7 +398,7 @@ upsert_table <- function(table, table_name_in_base, keycols, host="localhost", p
 				}
 			}) %>% .[map_lgl(., ~nchar(.x)>0)] %>% paste(collapse = ",")
 		)
-		query <- paste0(prefix, gsub("\"Qù@ñÐĲ€T@IS©H€ZMŒZI//@\"", "NULL",  values), suffix, ";")
+		query <- paste0(prefix, gsub("\"Qù@ñÐĲ€T@IS©H€ZMŒZI//@\"", "NULL", values), suffix, ";")
 		tryCatch(
 			{exec_query(host, port, db, user, password, query)},
 			warn=function(w) {

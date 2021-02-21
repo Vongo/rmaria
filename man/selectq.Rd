@@ -20,7 +20,7 @@ Requires credentials to be loaded, obviously.
 selectq("select * from shop limit 10;")}
 }
 \seealso{
-exec_query pull_data
+execq pull_data
 }
 \keyword{mysql}
 \keyword{select}
