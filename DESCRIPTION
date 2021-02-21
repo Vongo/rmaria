@@ -1,10 +1,10 @@
 Package: rmaria
 Title: Utilities to make it easier to connect with MariaDB.
-Version: 0.4.13
+Version: 0.4.14
 Author: person(given = "Adrian",
-	   family = "Delmarre",
-	   role = c("aut", "cre"),
-	   email = "a.delmarre@vongo.eu")
+	family = "Delmarre",
+	role = c("aut", "cre"),
+	email = "a.delmarre@vongo.eu")
 Maintainer: Adrian Delmarre <adelmarre@vongo.eu>
 Description: Provides utilities to ease the pain of managing MariaDB connections.
 License: WTFPL

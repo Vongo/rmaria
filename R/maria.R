@@ -97,7 +97,7 @@ execq <- function(query, ...) {
 #' @export
 #' @examples
 #' \dontrun{data <- pull_data(host=HOST, db=DB, user=user, password=pwd, query="select * from table;")}
-exec_query <-  function(host="localhost", port=3306, db, user, password, query) {
+exec_query <- function(host="localhost", port=3306, db, user, password, query) {
 	con <- RMariaDB::dbConnect(RMariaDB::MariaDB(), user=user, password=password, dbname=db, host=host, port=port)
 	RMariaDB::dbExecute(con, 'set character set "utf8"')
 	RMariaDB::dbExecute(con, query)
@@ -124,8 +124,22 @@ insert_table_safe <- function(table, table_name_in_base) {
 	}
 	library(RMariaDB)
 	con <- RMariaDB::dbConnect(RMariaDB::MariaDB(), host=HOST, db=DB, user=USER, password=PWD, port=3306)
-	RMariaDB::dbWriteTable(con, table_name_in_base, table, append=TRUE)
+	append_to_table(con, table_name_in_base, table)
 	RMariaDB::dbDisconnect(con)
+}
+
+# Temporarily (and shamelessly) copied from https://github.com/r-dbi/RMariaDB/issues/162#issuecomment-666435502
+append_to_table = function(con, name, df) {
+	f <- tempfile()
+	dbFields = dbListFields(con, name)
+	for (dbField in dbFields) {
+		if (!(dbField %in% colnames(df))) {
+			df[[dbField]] = NA
+		}
+	}
+	df <- df %>% select(dbFields)
+	write.csv(df, file=f, row.names=F, na="NULL", fileEncoding="UTF-8")
+	dbWriteTable(con, name, f, append=T, eol="\r\n")
 }
 
 #' Truncate table

@@ -4,7 +4,7 @@
 \alias{insert_table_safe}
 \title{Simplified bulk insert}
 \usage{
-insert_table_safe(table, table_name_in_base, ...)
+insert_table_safe(table, table_name_in_base)
 }
 \arguments{
 \item{table}{data.frame or data.table to insert}
