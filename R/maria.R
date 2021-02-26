@@ -111,12 +111,12 @@ exec_query <- function(host="localhost", port=3306, db, user, password, query) {
 #' @param table_name_in_base table in {db} to insert data into
 #' @param ... any other parameter that applies to insert_table
 #' @keywords MariaDB insert
-#' @details It's important to be aware that both input table and table in database should have the same schema (matching names, matching types). The difference between insertq and insert_table_safe is that insertq will split data in smaller groups, and insert_table_safe will just rely on the engine. Also, \code{insertq} uses homemade INSERTS statements.
+#' @details It's important to be aware that both input table and table in database should have the same schema (matching names, matching types). The difference between insertq and insert_table_local is that insertq will split data in smaller groups, and insert_table_local will just rely on the engine. Also, \code{insertq} uses homemade INSERTS statements.
 #' @seealso pull_data, selectq, insert_table, insertq
 #' @export
 #' @examples
-#' \dontrun{data <- insert_table_safe(host=HOST, db=DB, user=user, password=pwd, query="select * from table;")}
-insert_table_safe <- function(table, table_name_in_base) {
+#' \dontrun{data <- insert_table_local(host=HOST, db=DB, user=user, password=pwd, query="select * from table;")}
+insert_table_local <- function(table, table_name_in_base) {
 	if (!all(c("DB", "HOST", "PWD", "USER") %in% ls(1))) {
 		init()
 		logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
@@ -124,7 +124,7 @@ insert_table_safe <- function(table, table_name_in_base) {
 	}
 	library(RMariaDB)
 	con <- RMariaDB::dbConnect(RMariaDB::MariaDB(), host=HOST, db=DB, user=USER, password=PWD, port=3306)
-	RMySQL::dbAppendTable(con, table_name_in_base, table)
+	RMariaDB::dbWriteTable(con, table_name_in_base, table, append=TRUE)
 	RMariaDB::dbDisconnect(con)
 }
 
