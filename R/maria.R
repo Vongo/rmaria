@@ -292,7 +292,7 @@ insert_table <- function(table, table_name_in_base, host="localhost", port=3306,
 						sapply(seq(ncol(table)), function(ic) {
 							if ((table[k, ic] %>% {is.na(.) || is.nan(.) || (is.numeric(.) && !is.finite(.))})) {
 								"\"Qù@ñÐĲ€T@IS©H€ZMŒZI//@\""
-							} else `if`(has_quotes[ic], paste0("'", gsub('"', '\'', gsub("'", '\'', table[k, ic])), "'"), table[k, ic])
+							} else `if`(has_quotes[ic], paste0('"', gsub('"', '\'', gsub("'", '\'', table[k, ic])), '"'), table[k, ic])
 						}), collapse=","
 					), ")"
 				)
