@@ -297,7 +297,7 @@ insert_table <- function(table, table_name_in_base, host="localhost", port=3306,
 									table[k, ic] %>%
 										{gsub("'", '\'', .)} %>%
 										{gsub('"', '\'', .)} %>%
-										{`if`(allow.backslash, gsub("\\0", "/0", .), gsub("\\", "/", .))} %>%
+										{`if`(allow.backslash, gsub("\\\\0", "/0", .), gsub("\\\\", "/", .))} %>%
 										{paste0('"', ., '"')}
 								} else {
 									table[k, ic]
