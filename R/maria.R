@@ -266,7 +266,7 @@ edq <- function(str) {
 #' @export
 #' @examples
 #' \dontrun{data <- insert_table(iris, "iris_name_in_database", host=HOST, db=DB, user=user, password=pwd)}
-insert_table <- function(table, table_name_in_base, host="localhost", port=3306, db, user, password, chunk_size=NA, progress_bar=TRUE, ignore=TRUE, nolog=FALSE) {
+insert_table <- function(table, table_name_in_base, host="localhost", port=3306, db, user, password, chunk_size=NA, progress_bar=TRUE, ignore=TRUE, nolog=FALSE, allow.backslash=FALSE) {
 	init()
 	if (nrow(table) == 0) {
 		if (!nolog) logging::logwarn("You tried to insert an empty table. Leaving.", logger=LOGGER.MAIN)
@@ -291,14 +291,24 @@ insert_table <- function(table, table_name_in_base, host="localhost", port=3306,
 					paste0(
 						sapply(seq(ncol(table)), function(ic) {
 							if ((table[k, ic] %>% {is.na(.) || is.nan(.) || (is.numeric(.) && !is.finite(.))})) {
-								"\"Qù@ñÐĲ€T@IS©H€ZMŒZI//@\""
-							} else `if`(has_quotes[ic], paste0('"', gsub('"', '\'', gsub("'", '\'', table[k, ic])), '"'), table[k, ic])
+								"Qù@ñÐĲ€T@IS©H€ZMŒZI//@"
+							} else {
+								if(has_quotes[ic]) {
+									table[k, ic] %>%
+										{gsub("'", '\'', .)} %>%
+										{gsub('"', '\'', .)} %>%
+										{`if`(allow.backslash, gsub("\\0", "/0", .), gsub("\\", "/", .))} %>%
+										{paste0('"', ., '"')}
+								} else {
+									table[k, ic]
+								}
+							}
 						}), collapse=","
 					), ")"
 				)
 			}
 		}
-		query <- gsub("\"Qù@ñÐĲ€T@IS©H€ZMŒZI//@\"", "NULL", paste0(query, paste0(vals, collapse=',')))
+		query <- gsub("Qù@ñÐĲ€T@IS©H€ZMŒZI//@", "NULL", paste0(query, paste0(vals, collapse=',')))
 		tryCatch({
 				exec_query(host=host, port=port, db=db, user=user, password=password, query=query)
 			},

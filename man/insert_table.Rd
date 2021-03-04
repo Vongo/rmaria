@@ -15,7 +15,8 @@ insert_table(
   chunk_size = NA,
   progress_bar = TRUE,
   ignore = TRUE,
-  nolog = FALSE
+  nolog = FALSE,
+  allow.backslash = FALSE
 )
 }
 \arguments{
