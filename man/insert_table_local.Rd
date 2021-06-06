@@ -4,14 +4,14 @@
 \alias{insert_table_local}
 \title{Simplified bulk insert}
 \usage{
-insert_table_local(table, table_name_in_base)
+insert_table_local(table, table_name_in_base, preface_queries = character(0))
 }
 \arguments{
 \item{table}{data.frame or data.table to insert}
 
 \item{table_name_in_base}{table in {db} to insert data into}
 
-\item{...}{any other parameter that applies to insert_table}
+\item{preface_queries}{character vector of queries you want to apply before, typically setting session variables.}
 }
 \description{
 Simple method that inserts the input data.frame or data.table into the designated table in the current DB context.
@@ -20,7 +20,10 @@ Simple method that inserts the input data.frame or data.table into the designate
 It's important to be aware that both input table and table in database should have the same schema (matching names, matching types). The difference between insertq and insert_table_local is that insertq will split data in smaller groups, and insert_table_local will just rely on the engine. Also, \code{insertq} uses homemade INSERTS statements.
 }
 \examples{
-\dontrun{data <- insert_table_local(host=HOST, db=DB, user=user, password=pwd, query="select * from table;")}
+\dontrun{
+  data <- insert_table_local(iris, "iris")
+  data <- insert_table_local(iris, "iris", preface_queries="SET session rocksdb_bulk_load=1")
+}
 }
 \seealso{
 pull_data, selectq, insert_table, insertq
