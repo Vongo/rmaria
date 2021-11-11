@@ -4,7 +4,12 @@
 \alias{insert_table_local}
 \title{Simplified bulk insert}
 \usage{
-insert_table_local(table, table_name_in_base, preface_queries = character(0))
+insert_table_local(
+  table,
+  table_name_in_base,
+  preface_queries = character(0),
+  split_threshold = 100000
+)
 }
 \arguments{
 \item{table}{data.frame or data.table to insert}

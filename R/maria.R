@@ -119,7 +119,7 @@ exec_query <- function(host="localhost", port=3306, db, user, password, query) {
 #'   data <- insert_table_local(iris, "iris")
 #'   data <- insert_table_local(iris, "iris", preface_queries="SET session rocksdb_bulk_load=1")
 #' }
-insert_table_local <- function(table, table_name_in_base, preface_queries=character(0)) {
+insert_table_local <- function(table, table_name_in_base, preface_queries=character(0), split_threshold=1e5) {
 	if (!all(c("DB", "HOST", "PWD", "USER") %in% ls(1))) {
 		init()
 		logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
@@ -132,7 +132,21 @@ insert_table_local <- function(table, table_name_in_base, preface_queries=charac
 			RMariaDB::dbExecute(con, preface_query)
 		}
 	}
-	RMariaDB::dbWriteTable(con, table_name_in_base, table, append=TRUE)
+	RMariaDB::dbExecute(con, "set character set \"utf8mb4\"")
+	RMariaDB::dbExecute(con, "SET character_set_client = \"utf8mb4\";")
+	RMariaDB::dbExecute(con, "SET character_set_results = \"utf8mb4\";")
+	RMariaDB::dbExecute(con, "SET character_set_connection = \"utf8mb4\";")
+	# print(RMariaDB::dbGetQuery(con, "SELECT @@character_set_client;"))
+	if (nrow(table)>=split_threshold) {
+		start <- 1
+		while (start <= nrow(merged)) {
+			end <- min(nrow(merged), start+1e5-1)
+			RMariaDB::dbWriteTable(con, table_name_in_base, table[start:end,], append=TRUE)
+			start <- end + 1
+		}
+	} else {
+		RMariaDB::dbWriteTable(con, table_name_in_base, table, append=TRUE)
+	}
 	RMariaDB::dbDisconnect(con)
 }
 
