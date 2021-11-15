@@ -1,6 +1,6 @@
 Package: rmaria
 Title: Utilities to make it easier to connect with MariaDB.
-Version: 0.4.333
+Version: 0.4.334
 Author: person(given = "Adrian",
 	family = "Delmarre",
 	role = c("aut", "cre"),
