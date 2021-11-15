@@ -139,8 +139,8 @@ insert_table_local <- function(table, table_name_in_base, preface_queries=charac
 	# print(RMariaDB::dbGetQuery(con, "SELECT @@character_set_client;"))
 	if (nrow(table)>=split_threshold) {
 		start <- 1
-		while (start <= nrow(merged)) {
-			end <- min(nrow(merged), start+1e5-1)
+		while (start < nrow(table)) {
+			end <- min(nrow(table), start+split_threshold-1)
 			RMariaDB::dbWriteTable(con, table_name_in_base, table[start:end,], append=TRUE)
 			start <- end + 1
 		}
