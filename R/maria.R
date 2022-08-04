@@ -21,19 +21,33 @@ init()
 #' \dontrun{
 #' selectq("select * from shop limit 10;")}
 selectq <- function(query, ...) {
-	e <- environment()
-	if (!all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists)))) {
-		pf <- parent.frame()
-		if (exists("DB", envir=pf) && exists("HOST", envir=pf) && exists("PWD", envir=pf) && exists("USER", envir=pf)) {
-			assign("DB", get("DB", envir=pf), envir=e)
-			assign("HOST", get("HOST", envir=pf), envir=e)
-			assign("PWD", get("PWD", envir=pf), envir=e)
-			assign("USER", get("USER", envir=pf), envir=e)
-		} else {
-			init()
-			logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
-			return(data.table::data.table())
-		}
+	target_e <- environment()
+	source_environments <- list(
+		environment(),
+		parent.frame(),
+		parent.env(environment()),
+		parent.env(parent.env(environment())),
+		parent.env(parent.frame(n=1)),
+		parent.env(parent.frame(n=2)), # purrr::map
+		parent.env(parent.frame(n=3)),
+		parent.env(parent.frame(n=4)), # parallel::mclapply
+		parent.env(parent.frame(n=5))
+	)
+	i_env <- 1
+	source_e <- source_environments[[i_env]]
+	while (i_env<length(source_environments) && !all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
+		i_env %<>% add(1)
+		source_e <- source_environments[[i_env]]
+	}
+	if (all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
+		assign("DB", get("DB", envir=source_e), envir=target_e)
+		assign("HOST", get("HOST", envir=source_e), envir=target_e)
+		assign("PWD", get("PWD", envir=source_e), envir=target_e)
+		assign("USER", get("USER", envir=source_e), envir=target_e)
+	} else {
+		init()
+		logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
+		return(FALSE)
 	}
 	pull_data(host=HOST, db=DB, user=USER, password=PWD, query=query, ...)
 }
@@ -83,19 +97,33 @@ pull_data <- function(host="localhost", port=3306, db, user, password, query, sc
 #' @examples
 #' \dontrun{execq('set character set "utf8"')}
 execq <- function(query, ...) {
-	e <- environment()
-	if (!all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists)))) {
-		pf <- parent.frame()
-		if (exists("DB", envir=pf) && exists("HOST", envir=pf) && exists("PWD", envir=pf) && exists("USER", envir=pf)) {
-			assign("DB", get("DB", envir=pf), envir=e)
-			assign("HOST", get("HOST", envir=pf), envir=e)
-			assign("PWD", get("PWD", envir=pf), envir=e)
-			assign("USER", get("USER", envir=pf), envir=e)
-		} else {
-			init()
-			logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
-			return(NULL)
-		}
+	target_e <- environment()
+	source_environments <- list(
+		environment(),
+		parent.frame(),
+		parent.env(environment()),
+		parent.env(parent.env(environment())),
+		parent.env(parent.frame(n=1)),
+		parent.env(parent.frame(n=2)), # purrr::map
+		parent.env(parent.frame(n=3)),
+		parent.env(parent.frame(n=4)), # parallel::mclapply
+		parent.env(parent.frame(n=5))
+	)
+	i_env <- 1
+	source_e <- source_environments[[i_env]]
+	while (i_env<length(source_environments) && !all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
+		i_env %<>% add(1)
+		source_e <- source_environments[[i_env]]
+	}
+	if (all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
+		assign("DB", get("DB", envir=source_e), envir=target_e)
+		assign("HOST", get("HOST", envir=source_e), envir=target_e)
+		assign("PWD", get("PWD", envir=source_e), envir=target_e)
+		assign("USER", get("USER", envir=source_e), envir=target_e)
+	} else {
+		init()
+		logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
+		return(FALSE)
 	}
 	exec_query(host=HOST, db=DB, user=USER, password=PWD, query=query, ...)
 }
@@ -138,19 +166,33 @@ exec_query <- function(host="localhost", port=3306, db, user, password, query) {
 #'   data <- insert_table_local(iris, "iris", preface_queries="SET session rocksdb_bulk_load=1")
 #' }
 insert_table_local <- function(table, table_name_in_base, preface_queries=character(0), split_threshold=1e5) {
-	e <- environment()
-	if (!all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists)))) {
-		pf <- parent.frame()
-		if (exists("DB", envir=pf) && exists("HOST", envir=pf) && exists("PWD", envir=pf) && exists("USER", envir=pf)) {
-			assign("DB", get("DB", envir=pf), envir=e)
-			assign("HOST", get("HOST", envir=pf), envir=e)
-			assign("PWD", get("PWD", envir=pf), envir=e)
-			assign("USER", get("USER", envir=pf), envir=e)
-		} else {
-			init()
-			logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
-			return(FALSE)
-		}
+	target_e <- environment()
+	source_environments <- list(
+		environment(),
+		parent.frame(),
+		parent.env(environment()),
+		parent.env(parent.env(environment())),
+		parent.env(parent.frame(n=1)),
+		parent.env(parent.frame(n=2)), # purrr::map
+		parent.env(parent.frame(n=3)),
+		parent.env(parent.frame(n=4)), # parallel::mclapply
+		parent.env(parent.frame(n=5))
+	)
+	i_env <- 1
+	source_e <- source_environments[[i_env]]
+	while (i_env<length(source_environments) && !all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
+		i_env %<>% add(1)
+		source_e <- source_environments[[i_env]]
+	}
+	if (all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
+		assign("DB", get("DB", envir=source_e), envir=target_e)
+		assign("HOST", get("HOST", envir=source_e), envir=target_e)
+		assign("PWD", get("PWD", envir=source_e), envir=target_e)
+		assign("USER", get("USER", envir=source_e), envir=target_e)
+	} else {
+		init()
+		logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
+		return(FALSE)
 	}
 	library(RMariaDB)
 	con <- RMariaDB::dbConnect(RMariaDB::MariaDB(), host=HOST, db=DB, user=USER, password=PWD, port=3306)
@@ -237,19 +279,33 @@ insert_source_full_file <- function(src, host="localhost", port=3306, db, user, 
 #' @examples
 #' \dontrun{data <- insertq(host=HOST, db=DB, user=user, password=pwd, query="select * from table;")}
 insertq <- function(table, table_name_in_base, ...) {
-	e <- environment()
-	if (!all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists)))) {
-		pf <- parent.frame()
-		if (exists("DB", envir=pf) && exists("HOST", envir=pf) && exists("PWD", envir=pf) && exists("USER", envir=pf)) {
-			assign("DB", get("DB", envir=pf), envir=e)
-			assign("HOST", get("HOST", envir=pf), envir=e)
-			assign("PWD", get("PWD", envir=pf), envir=e)
-			assign("USER", get("USER", envir=pf), envir=e)
-		} else {
-			init()
-			logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
-			return(FALSE)
-		}
+	target_e <- environment()
+	source_environments <- list(
+		environment(),
+		parent.frame(),
+		parent.env(environment()),
+		parent.env(parent.env(environment())),
+		parent.env(parent.frame(n=1)),
+		parent.env(parent.frame(n=2)), # purrr::map
+		parent.env(parent.frame(n=3)),
+		parent.env(parent.frame(n=4)), # parallel::mclapply
+		parent.env(parent.frame(n=5))
+	)
+	i_env <- 1
+	source_e <- source_environments[[i_env]]
+	while (i_env<length(source_environments) && !all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
+		i_env %<>% add(1)
+		source_e <- source_environments[[i_env]]
+	}
+	if (all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
+		assign("DB", get("DB", envir=source_e), envir=target_e)
+		assign("HOST", get("HOST", envir=source_e), envir=target_e)
+		assign("PWD", get("PWD", envir=source_e), envir=target_e)
+		assign("USER", get("USER", envir=source_e), envir=target_e)
+	} else {
+		init()
+		logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
+		return(FALSE)
 	}
 	insert_table(table=table, table_name_in_base=table_name_in_base, host=HOST, db=DB, user=USER, password=PWD, ...)
 }
@@ -285,19 +341,33 @@ delete_from_table <- function(table_name_in_base, where, host="localhost", port=
 #' @examples
 #' \dontrun{deleteq(table_name_in_base="foo", where="id < 10")}
 deleteq <- function(table_name_in_base, where, ...) {
-	e <- environment()
-	if (!all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists)))) {
-		pf <- parent.frame()
-		if (exists("DB", envir=pf) && exists("HOST", envir=pf) && exists("PWD", envir=pf) && exists("USER", envir=pf)) {
-			assign("DB", get("DB", envir=pf), envir=e)
-			assign("HOST", get("HOST", envir=pf), envir=e)
-			assign("PWD", get("PWD", envir=pf), envir=e)
-			assign("USER", get("USER", envir=pf), envir=e)
-		} else {
-			init()
-			logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
-			return(FALSE)
-		}
+	target_e <- environment()
+	source_environments <- list(
+		environment(),
+		parent.frame(),
+		parent.env(environment()),
+		parent.env(parent.env(environment())),
+		parent.env(parent.frame(n=1)),
+		parent.env(parent.frame(n=2)), # purrr::map
+		parent.env(parent.frame(n=3)),
+		parent.env(parent.frame(n=4)), # parallel::mclapply
+		parent.env(parent.frame(n=5))
+	)
+	i_env <- 1
+	source_e <- source_environments[[i_env]]
+	while (i_env<length(source_environments) && !all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
+		i_env %<>% add(1)
+		source_e <- source_environments[[i_env]]
+	}
+	if (all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
+		assign("DB", get("DB", envir=source_e), envir=target_e)
+		assign("HOST", get("HOST", envir=source_e), envir=target_e)
+		assign("PWD", get("PWD", envir=source_e), envir=target_e)
+		assign("USER", get("USER", envir=source_e), envir=target_e)
+	} else {
+		init()
+		logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
+		return(FALSE)
 	}
 	delete_from_table(table_name_in_base, where, host=HOST, db=DB, user=USER, password=PWD, ...)
 }
@@ -404,19 +474,33 @@ insert_table <- function(table, table_name_in_base, host="localhost", port=3306,
 #' @examples
 #' \dontrun{upsertq(iris, "iris_database_name")}
 upsertq <- function(table, table_name_in_base, ...) {
-	e <- environment()
-	if (!all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists)))) {
-		pf <- parent.frame()
-		if (exists("DB", envir=pf) && exists("HOST", envir=pf) && exists("PWD", envir=pf) && exists("USER", envir=pf)) {
-			assign("DB", get("DB", envir=pf), envir=e)
-			assign("HOST", get("HOST", envir=pf), envir=e)
-			assign("PWD", get("PWD", envir=pf), envir=e)
-			assign("USER", get("USER", envir=pf), envir=e)
-		} else {
-			init()
-			logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
-			return(FALSE)
-		}
+	target_e <- environment()
+	source_environments <- list(
+		environment(),
+		parent.frame(),
+		parent.env(environment()),
+		parent.env(parent.env(environment())),
+		parent.env(parent.frame(n=1)),
+		parent.env(parent.frame(n=2)), # purrr::map
+		parent.env(parent.frame(n=3)),
+		parent.env(parent.frame(n=4)), # parallel::mclapply
+		parent.env(parent.frame(n=5))
+	)
+	i_env <- 1
+	source_e <- source_environments[[i_env]]
+	while (i_env<length(source_environments) && !all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
+		i_env %<>% add(1)
+		source_e <- source_environments[[i_env]]
+	}
+	if (all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
+		assign("DB", get("DB", envir=source_e), envir=target_e)
+		assign("HOST", get("HOST", envir=source_e), envir=target_e)
+		assign("PWD", get("PWD", envir=source_e), envir=target_e)
+		assign("USER", get("USER", envir=source_e), envir=target_e)
+	} else {
+		init()
+		logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
+		return(FALSE)
 	}
 	upsert_table(table=table, table_name_in_base=table_name_in_base, host=HOST, db=DB, user=USER, password=PWD, ...)
 }
