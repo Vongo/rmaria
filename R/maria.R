@@ -19,7 +19,7 @@ init()
 #' @export
 #' @examples
 #' \dontrun{
-#' selectq("select * from shop limit 10;")}
+#' selectq("select * from table limit 10;")}
 selectq <- function(query, ...) {
 	target_e <- environment()
 	source_environments <- list(
@@ -70,19 +70,26 @@ selectq <- function(query, ...) {
 #' @export
 #' @examples
 #' \dontrun{data <- pull_data(host=HOST, db=DB, user=user, password=pwd, query="select * from table;")}
-pull_data <- function(host="localhost", port=3306, db, user, password, query, scroll_size=NA, verbose=TRUE) {
+pull_data <- function(host="localhost", port=3306, db, user, password, query, scroll_size=NA, verbose=TRUE, keep_int64=FALSE) {
 	init()
 
-	logging::logdebug("Fetching data with query: \n\t%s.", query, logger=LOGGER.MAIN)
+	logging::logfinest("Fetching data with query: \n\t%s.", query, logger=LOGGER.MAIN)
 	con <- RMariaDB::dbConnect(RMariaDB::MariaDB(), user=user, password=password, dbname=db, host=host, port=port)
 
 	RMariaDB::dbExecute(con, 'set character set "utf8"')
 	data <- RMariaDB::dbGetQuery(con, query)
 	RMariaDB::dbDisconnect(con)
-	logging::logdebug("Properly retrieved %i observations.", nrow(data), logger=LOGGER.MAIN)
-	purrr::modify_if(data, is.list, unlist) %>% purrr::modify_if(is.raw, as.logical) %>%
-		purrr::modify_if(bit64::is.integer64, as.numeric) %>%
-		data.table::as.data.table()
+	logging::logfinest("Properly retrieved %i observations.", nrow(data), logger=LOGGER.MAIN)
+	if (keep_int64==TRUE) {
+		purrr::modify_if(data, is.list, unlist) |>
+			purrr::modify_if(is.raw, as.logical) |>
+			data.table::as.data.table()
+	} else {
+		purrr::modify_if(data, is.list, unlist) |>
+			purrr::modify_if(is.raw, as.logical) |>
+			purrr::modify_if(bit64::is.integer64, as.numeric) |>
+			data.table::as.data.table()
+	}
 }
 
 #' Exec
@@ -239,17 +246,6 @@ truncate_table <- function(table_name_in_base, host="localhost", port=3306, db, 
 	con <- RMariaDB::dbConnect(RMariaDB::MariaDB(), user=user, password=password, dbname=db, host=host, port=port)
 	RMariaDB::dbExecute(con, query)
 	RMariaDB::dbDisconnect(con)
-}
-
-get_shop_details <- function(shop_ids, host="localhost", port=3306, db, user, password, query) {
-	query <- paste0("SELECT id, date_terminal_installation, date_signup, date_cancelled,
-			(CASE WHEN date_cancelled IS NULL
-			THEN TIMESTAMPDIFF(MONTH, date_terminal_installation, CURRENT_DATE)
-			ELSE TIMESTAMPDIFF(MONTH, date_terminal_installation, date_cancelled) END) program_duration,
-			bank_short_name
-		FROM shop
-		WHERE shop.id IN (", paste(shop_ids, collapse=","), ");")
-	pull_data(host, port, db, user, password, query)
 }
 
 insert_source_full_file <- function(src, host="localhost", port=3306, db, user, password) {
@@ -431,9 +427,9 @@ insert_table <- function(table, table_name_in_base, host="localhost", port=3306,
 								"Qù@ñÐĲ€T@IS©H€ZMŒZI//@"
 							} else {
 								if(has_quotes[ic]) {
-									table[k, ic] %>%
-										{gsub("'", '\'', .)} %>%
-										{gsub('"', '\'', .)} %>%
+									table[k, ic] |>
+										gsub("'", '\'', x=_) |>
+										gsub('"', '\'', x=_) %>%
 										{`if`(allow.backslash, gsub("\\\\0", "/0", .), gsub("\\\\", "/", .))} %>%
 										{paste0('"', ., '"')}
 								} else {
@@ -556,7 +552,7 @@ upsert_table <- function(table, table_name_in_base, keycols, host="localhost", p
 		)
 		suffix <- paste0(
 			" ON DUPLICATE KEY UPDATE ",
-			which(colnames(table) %ni% keycols) %>% sapply(function(ic) {
+			which(colnames(table) %ni% keycols) |> sapply(function(ic) {
 				if ((table[i, ic] %>% {is.na(.) || is.nan(.) || (is.numeric(.) && !is.finite(.))})) {
 					""
 				} else {
@@ -566,7 +562,7 @@ upsert_table <- function(table, table_name_in_base, keycols, host="localhost", p
 						sep="="
 					)
 				}
-			}) %>% .[map_lgl(., ~nchar(.x)>0)] %>% paste(collapse = ",")
+			}) %>% .[map_lgl(., ~nchar(.x)>0)] |> paste(collapse = ",")
 		)
 		query <- paste0(prefix, gsub("\"Qù@ñÐĲ€T@IS©H€ZMŒZI//@\"", "NULL", values), suffix, ";")
 		tryCatch(
