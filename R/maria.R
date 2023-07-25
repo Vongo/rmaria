@@ -645,9 +645,9 @@ updateq <- function(table, table_name_in_base, ...) {
 update_table <- function(table, table_name_in_base, keycols, host="localhost", port=3306, db, user, password,
 	progress_bar=TRUE, nolog=FALSE
 ) {
-	# INSERT INTO `item`
-	# (`item_name`, items_in_stock)
-	# VALUES( 'A', 27)
+	# UPDATE `item` (`item_name`, items_in_stock)
+	# SET `new_items_count` = `new_items_count` + 27
+	# WHERE `id`=42;
 
 	init()
 	if (nrow(table) == 0) {
@@ -659,17 +659,22 @@ update_table <- function(table, table_name_in_base, keycols, host="localhost", p
 	has_quotes <- sapply(seq(ncol(table)), function(ic) !(is.numeric(table[,ic]) || is.logical(table[,ic])))
 	pb <- if(progress_bar) create_pb(nrow(table), bar_style="pc", time_style="cd") else NULL
 	for (i in seq(nrow(table))) {
-		prefix <- paste0("INSERT INTO ", table_name_in_base, "(", paste0(colnames(table), collapse=","), ") VALUES ")
-		values <- paste0("(",
-			paste0(
-				sapply(seq(ncol(table)), function(ic) {
-					if ((table[i, ic] %>% {is.na(.) || is.nan(.) || (is.numeric(.) && !is.finite(.))})) {
-						"\"Qù@ñÐĲ€T@IS©H€ZMŒZI//@\""
-					} else `if`(has_quotes[ic], paste0("'", gsub("'", '"', table[i, ic]), "'"), table[i, ic])
-				}), collapse=","
-			), ")"
+		prefix <- paste0("UPDATE ", table_name_in_base, "(", paste0(colnames(table), collapse=","), ") SET ")
+		suffix <- paste0(
+			" ON DUPLICATE KEY UPDATE ",
+			which(colnames(table) %ni% keycols) |> sapply(function(ic) {
+				if ((table[i, ic] %>% {is.na(.) || is.nan(.) || (is.numeric(.) && !is.finite(.))})) {
+					""
+				} else {
+					paste(
+						colnames(table)[ic],
+						`if`(has_quotes[ic], paste0("'", gsub("'", '\"', table[i, ic]), "'"), table[i, ic]),
+						sep="="
+					)
+				}
+			}) %>% .[map_lgl(., ~nchar(.x)>0)] |> paste(collapse = ",")
 		)
-		query <- paste0(prefix, gsub("\"Qù@ñÐĲ€T@IS©H€ZMŒZI//@\"", "NULL", values), ";")
+		query <- paste0(prefix, suffix, ";")
 		tryCatch({
 				exec_query(host, port, db, user, password, query)
 			},
