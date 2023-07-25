@@ -661,7 +661,6 @@ update_table <- function(table, table_name_in_base, keycols, host="localhost", p
 	for (i in seq(nrow(table))) {
 		prefix <- paste0("UPDATE ", table_name_in_base, "(", paste0(colnames(table), collapse=","), ") SET ")
 		suffix <- paste0(
-			" ON DUPLICATE KEY UPDATE ",
 			which(colnames(table) %ni% keycols) |> sapply(function(ic) {
 				if ((table[i, ic] %>% {is.na(.) || is.nan(.) || (is.numeric(.) && !is.finite(.))})) {
 					""
