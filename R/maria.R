@@ -577,3 +577,109 @@ upsert_table <- function(table, table_name_in_base, keycols, host="localhost", p
 		if (progress_bar) update_pb(pb, i)
 	}
 }
+
+#' Simplified update
+#'
+#' Simple method that updates the input data.frame or data.table into the designated table in the current DB context.
+#' @param table data.frame or data.table to update
+#' @param table_name_in_base table in {db} to update data into
+#' @param ... any other parameter that applies to update_table
+#' @keywords mysql update insert
+#' @details It's important to be aware that both input table and table in database should have the same schema (matching names, matching types).
+#' @seealso pull_data, selectq, update_table, insertq, insert_table
+#' @export
+#' @examples
+#' \dontrun{updateq(iris, "iris_database_name")}
+updateq <- function(table, table_name_in_base, ...) {
+	target_e <- environment()
+	source_environments <- list(
+		environment(),
+		parent.frame(),
+		parent.env(environment()),
+		parent.env(parent.env(environment())),
+		parent.env(parent.frame(n=1)),
+		parent.env(parent.frame(n=2)), # purrr::map
+		parent.env(parent.frame(n=3)),
+		parent.env(parent.frame(n=4)), # parallel::mclapply
+		parent.env(parent.frame(n=5))
+	)
+	i_env <- 1
+	source_e <- source_environments[[i_env]]
+	while (i_env<length(source_environments) && !all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
+		i_env %<>% add(1)
+		source_e <- source_environments[[i_env]]
+	}
+	if (all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
+		assign("DB", get("DB", envir=source_e), envir=target_e)
+		assign("HOST", get("HOST", envir=source_e), envir=target_e)
+		assign("PWD", get("PWD", envir=source_e), envir=target_e)
+		assign("USER", get("USER", envir=source_e), envir=target_e)
+	} else {
+		init()
+		logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
+		return(FALSE)
+	}
+	update_table(table=table, table_name_in_base=table_name_in_base, host=HOST, db=DB, user=USER, password=PWD, ...)
+}
+
+
+#' update
+#'
+#' Simple method that inserts the input data.frame or data.table into the designated table, or updates it if the key already exists.
+#' @param host host
+#' @param port port
+#' @param db default database name
+#' @param user user
+#' @param password password
+#' @param table data.frame or data.table to insert
+#' @param table_name_in_base table in {db} to insert data into
+#' @param progress_bar nice progress bar to use, it's recommended to disable it in log mode
+#' @param nolog avoid any writing to the console
+#' @param keycols name of the colums that
+#' @keywords mysql insert
+#' @details It's important to be aware that both input table and table in database should have the same schema (matching names, matching types).
+#' @seealso pull_data, selectq, insertq
+#' @export
+#' @examples
+#' \dontrun{data <- insert_table(iris, "iris_name_in_database", keycols=c("id"), host=HOST, db=DB, user=user, password=pwd)}
+update_table <- function(table, table_name_in_base, keycols, host="localhost", port=3306, db, user, password,
+	progress_bar=TRUE, nolog=FALSE
+) {
+	# INSERT INTO `item`
+	# (`item_name`, items_in_stock)
+	# VALUES( 'A', 27)
+
+	init()
+	if (nrow(table) == 0) {
+		if (!nolog) logging::logwarn("You tried to update with empty data. Leaving.", logger=LOGGER.MAIN)
+		return()
+	}
+	if (!nolog) logging::loginfo("updating %i rows data into table %s.", nrow(table), table_name_in_base, logger=LOGGER.MAIN)
+
+	has_quotes <- sapply(seq(ncol(table)), function(ic) !(is.numeric(table[,ic]) || is.logical(table[,ic])))
+	pb <- if(progress_bar) create_pb(nrow(table), bar_style="pc", time_style="cd") else NULL
+	for (i in seq(nrow(table))) {
+		prefix <- paste0("INSERT INTO ", table_name_in_base, "(", paste0(colnames(table), collapse=","), ") VALUES ")
+		values <- paste0("(",
+			paste0(
+				sapply(seq(ncol(table)), function(ic) {
+					if ((table[i, ic] %>% {is.na(.) || is.nan(.) || (is.numeric(.) && !is.finite(.))})) {
+						"\"Qù@ñÐĲ€T@IS©H€ZMŒZI//@\""
+					} else `if`(has_quotes[ic], paste0("'", gsub("'", '"', table[i, ic]), "'"), table[i, ic])
+				}), collapse=","
+			), ")"
+		)
+		query <- paste0(prefix, gsub("\"Qù@ñÐĲ€T@IS©H€ZMŒZI//@\"", "NULL", values), ";")
+		tryCatch({
+				exec_query(host, port, db, user, password, query)
+			},
+			warn=function(w) {
+				if (!nolog) logging::logwarn("Warning while updating query [%s]: [%s]", query, w, logger=LOGGER.MAIN)
+			},
+			error=function(e) {
+				if (!nolog) logging::logerror("Error while updating query [%s]: [%s]", query, e, logger=LOGGER.MAIN)
+			}
+		)
+		if (progress_bar) update_pb(pb, i)
+	}
+}

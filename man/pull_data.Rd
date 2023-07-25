@@ -12,7 +12,8 @@ pull_data(
   password,
   query,
   scroll_size = NA,
-  verbose = TRUE
+  verbose = TRUE,
+  keep_int64 = FALSE
 )
 }
 \arguments{

@@ -17,7 +17,7 @@ Requires credentials to be loaded, obviously.
 }
 \examples{
 \dontrun{
-selectq("select * from shop limit 10;")}
+selectq("select * from table limit 10;")}
 }
 \seealso{
 execq pull_data
