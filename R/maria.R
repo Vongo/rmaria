@@ -623,7 +623,7 @@ updateq <- function(table, table_name_in_base, ...) {
 }
 
 
-#' update
+#' Update
 #'
 #' Simple method that inserts the input data.frame or data.table into the designated table, or updates it if the key already exists.
 #' @param host host
@@ -643,7 +643,7 @@ updateq <- function(table, table_name_in_base, ...) {
 #' @examples
 #' \dontrun{data <- insert_table(iris, "iris_name_in_database", keycols=c("id"), host=HOST, db=DB, user=user, password=pwd)}
 update_table <- function(table, table_name_in_base, keycols, host="localhost", port=3306, db, user, password,
-	progress_bar=TRUE, nolog=FALSE
+	progress_bar=interactive(), nolog=FALSE
 ) {
 	# UPDATE `item` (`item_name`, items_in_stock)
 	# SET `new_items_count` = `new_items_count` + 27
@@ -656,23 +656,41 @@ update_table <- function(table, table_name_in_base, keycols, host="localhost", p
 	}
 	if (!nolog) logging::loginfo("updating %i rows data into table %s.", nrow(table), table_name_in_base, logger=LOGGER.MAIN)
 
-	has_quotes <- sapply(seq(ncol(table)), function(ic) !(is.numeric(table[,ic]) || is.logical(table[,ic])))
+	has_quotes <- table |> purrr::map_lgl(~!(is.numeric(.x)||is.logical(.x)))
 	pb <- if(progress_bar) create_pb(nrow(table), bar_style="pc", time_style="cd") else NULL
 	for (i in seq(nrow(table))) {
-		prefix <- paste0("UPDATE ", table_name_in_base, "(", paste0(colnames(table), collapse=","), ") SET ")
-		suffix <- paste0(
+		prefix <- paste0("UPDATE ", table_name_in_base, " SET ")
+		suffix <- paste(
 			which(colnames(table) %ni% keycols) |> sapply(function(ic) {
-				if ((table[i, ic] %>% {is.na(.) || is.nan(.) || (is.numeric(.) && !is.finite(.))})) {
+				value <- table[i, ic] |> unlist()
+				if (is.na(value) || is.nan(value) || (is.numeric(value) && !is.finite(value))) {
 					""
 				} else {
 					paste(
 						colnames(table)[ic],
-						`if`(has_quotes[ic], paste0("'", gsub("'", '\"', table[i, ic]), "'"), table[i, ic]),
+						`if`(has_quotes[ic], paste0("'", gsub("'", '\"', value), "'"), value),
 						sep="="
 					)
 				}
-			}) %>% .[map_lgl(., ~nchar(.x)>0)] |> paste(collapse = ",")
+			}) %>% .[map_lgl(., ~nchar(.x)>0)] |> paste(collapse = ","),
+			"where",
+			which(colnames(table) %in% keycols) |> sapply(function(ic) {
+				value <- table[i, ic] |> unlist()
+				if (is.na(value) || is.nan(value) || (is.numeric(value) && !is.finite(value))) {
+					""
+				} else {
+					paste(
+						colnames(table)[ic],
+						`if`(has_quotes[ic], paste0("'", gsub("'", '\"', value), "'"), value),
+						sep="="
+					)
+				}
+			}) %>% .[map_lgl(., ~nchar(.x)>0)] |> paste(collapse = " and ")
 		)
+		if (grepl("^[ ]*where", suffix) | grepl("where[ ]*$", suffix)) {
+			if (!nolog) logging::logfinest("Skipping incomplete row with index [%s]", i, logger=LOGGER.MAIN)
+			next
+		}
 		query <- paste0(prefix, suffix, ";")
 		tryCatch({
 				exec_query(host, port, db, user, password, query)
