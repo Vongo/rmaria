@@ -74,11 +74,16 @@ pull_data <- function(host="localhost", port=3306, db, user, password, query, sc
 	init()
 
 	logging::logfinest("Fetching data with query: \n\t%s.", query, logger=LOGGER.MAIN)
-	con <- RMariaDB::dbConnect(RMariaDB::MariaDB(), user=user, password=password, dbname=db, host=host, port=port)
-
-	RMariaDB::dbExecute(con, 'set character set "utf8"')
-	data <- RMariaDB::dbGetQuery(con, query)
-	RMariaDB::dbDisconnect(con)
+	con <- NULL
+	tryCatch({
+		con <- RMariaDB::dbConnect(RMariaDB::MariaDB(), user=user, password=password, dbname=db, host=host, port=port)
+		RMariaDB::dbExecute(con, 'set character set "utf8"')
+		data <- RMariaDB::dbGetQuery(con, query)
+	}, error=function(e) {
+		logging::logerror("Error while fetching data with query: %s", query, e)
+	}, finally={
+		if (!is.null(con)) RMariaDB::dbDisconnect(con)
+	})
 	logging::logfinest("Properly retrieved %i observations.", nrow(data), logger=LOGGER.MAIN)
 	if (keep_int64==TRUE) {
 		purrr::modify_if(data, is.list, unlist) |>
@@ -163,8 +168,9 @@ exec_query <- function(host="localhost", port=3306, db, user, password, query) {
 #' @param table data.frame or data.table to insert
 #' @param table_name_in_base table in {db} to insert data into
 #' @param preface_queries character vector of queries you want to apply before, typically setting session variables.
+#' @param split_threshold integer, number of rows to split the data into smaller groups. Default is 1e5.
 #' @keywords MariaDB insert
-#' @details It's important to be aware that both input table and table in database should have the same schema (matching names, matching types). The difference between insertq and insert_table_local is that insertq will split data in smaller groups, and insert_table_local will just rely on the engine. Also, \code{insertq} uses homemade INSERTS statements.
+#' @details It's important to be aware that both input table and table in database should have the same schema (matching names, matching types). The difference between insertq and insert_table_local is that \code{insertq} uses homemade INSERTS statements, and \code{insert_table_local} uses `load_data_local_infile` flag.
 #' @seealso pull_data, selectq, insert_table, insertq
 #' @export
 #' @examples
@@ -202,28 +208,38 @@ insert_table_local <- function(table, table_name_in_base, preface_queries=charac
 		return(FALSE)
 	}
 	library(RMariaDB)
-	con <- RMariaDB::dbConnect(RMariaDB::MariaDB(), host=HOST, db=DB, user=USER, password=PWD, port=3306)
-	if (length(preface_queries)>0) {
-		for (preface_query in preface_queries) {
-			RMariaDB::dbExecute(con, preface_query)
+	con <- NULL
+	tryCatch({
+		con <- RMariaDB::dbConnect(
+			RMariaDB::MariaDB(),
+			host=HOST, db=DB, user=USER, password=PWD, port=3306,
+			load_data_local_infile=TRUE
+		)
+		if (length(preface_queries)>0) {
+			for (preface_query in preface_queries) {
+				RMariaDB::dbExecute(con, preface_query)
+			}
 		}
-	}
-	RMariaDB::dbExecute(con, "set character set \"utf8mb4\"")
-	# RMariaDB::dbExecute(con, "SET character_set_client = \"utf8mb4\";")
-	# RMariaDB::dbExecute(con, "SET character_set_results = \"utf8mb4\";")
-	# RMariaDB::dbExecute(con, "SET character_set_connection = \"utf8mb4\";")
-	# print(RMariaDB::dbGetQuery(con, "SELECT @@character_set_client;"))
-	if (nrow(table)>=split_threshold) {
-		start <- 1
-		while (start < nrow(table)) {
-			end <- min(nrow(table), start+split_threshold-1)
-			RMariaDB::dbWriteTable(con, table_name_in_base, table[seq(start, end), names(table), drop=FALSE], append=TRUE)
-			start <- end + 1
+		RMariaDB::dbExecute(con, "set character set \"utf8mb4\"")
+		# RMariaDB::dbExecute(con, "SET character_set_client = \"utf8mb4\";")
+		# RMariaDB::dbExecute(con, "SET character_set_results = \"utf8mb4\";")
+		# RMariaDB::dbExecute(con, "SET character_set_connection = \"utf8mb4\";")
+		# print(RMariaDB::dbGetQuery(con, "SELECT @@character_set_client;"))
+		if (nrow(table)>=split_threshold) {
+			start <- 1
+			while (start < nrow(table)) {
+				end <- min(nrow(table), start+split_threshold-1)
+				RMariaDB::dbWriteTable(con, table_name_in_base, table[seq(start, end), names(table), drop=FALSE], append=TRUE)
+				start <- end + 1
+			}
+		} else {
+			RMariaDB::dbWriteTable(con, table_name_in_base, table, append=TRUE)
 		}
-	} else {
-		RMariaDB::dbWriteTable(con, table_name_in_base, table, append=TRUE)
-	}
-	RMariaDB::dbDisconnect(con)
+	}, error=function(e) {
+		logging::logerror("Error while inserting data into table %s: %s", table_name_in_base, e)
+	}, finally={
+		if (!is.null(con)) RMariaDB::dbDisconnect(con)
+	})
 }
 
 #' Truncate table
