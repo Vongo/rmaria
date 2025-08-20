@@ -8,7 +8,8 @@ insert_table_local(
   table,
   table_name_in_base,
   preface_queries = character(0),
-  split_threshold = 100000
+  split_threshold = 100000,
+  use_file = FALSE
 )
 }
 \arguments{
@@ -19,6 +20,8 @@ insert_table_local(
 \item{preface_queries}{character vector of queries you want to apply before, typically setting session variables.}
 
 \item{split_threshold}{integer, number of rows to split the data into smaller groups. Default is 1e5.}
+
+\item{use_file}{logical, if TRUE, uses `load_data_local_infile` flag. Default is FALSE. Careful if you use it, as it does a count(*) on table before and after to check what was integrated.}
 }
 \description{
 Simple method that inserts the input data.frame or data.table into the designated table in the current DB context.

@@ -169,6 +169,7 @@ exec_query <- function(host="localhost", port=3306, db, user, password, query) {
 #' @param table_name_in_base table in {db} to insert data into
 #' @param preface_queries character vector of queries you want to apply before, typically setting session variables.
 #' @param split_threshold integer, number of rows to split the data into smaller groups. Default is 1e5.
+#' @param use_file logical, if TRUE, uses `load_data_local_infile` flag. Default is FALSE. Careful if you use it, as it does a count(*) on table before and after to check what was integrated.
 #' @keywords MariaDB insert
 #' @details It's important to be aware that both input table and table in database should have the same schema (matching names, matching types). The difference between insertq and insert_table_local is that \code{insertq} uses homemade INSERTS statements, and \code{insert_table_local} uses `load_data_local_infile` flag.
 #' @seealso pull_data, selectq, insert_table, insertq
@@ -178,7 +179,7 @@ exec_query <- function(host="localhost", port=3306, db, user, password, query) {
 #'   data <- insert_table_local(iris, "iris")
 #'   data <- insert_table_local(iris, "iris", preface_queries="SET session rocksdb_bulk_load=1")
 #' }
-insert_table_local <- function(table, table_name_in_base, preface_queries=character(0), split_threshold=1e5) {
+insert_table_local <- function(table, table_name_in_base, preface_queries=character(0), split_threshold=1e5, use_file=FALSE) {
 	target_e <- environment()
 	source_environments <- list(
 		environment(),
@@ -213,7 +214,7 @@ insert_table_local <- function(table, table_name_in_base, preface_queries=charac
 		con <- RMariaDB::dbConnect(
 			RMariaDB::MariaDB(),
 			host=HOST, db=DB, user=USER, password=PWD, port=3306,
-			load_data_local_infile=TRUE
+			load_data_local_infile=use_file
 		)
 		if (length(preface_queries)>0) {
 			for (preface_query in preface_queries) {
