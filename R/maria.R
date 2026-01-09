@@ -80,11 +80,11 @@ pull_data <- function(host="localhost", port=3306, db, user, password, query, sc
 		RMariaDB::dbExecute(con, 'set character set "utf8"')
 		data <- RMariaDB::dbGetQuery(con, query)
 	}, error=function(e) {
-		logging::logerror("Error while fetching data with query: %s", query, e)
+		logging::logerror("Error while fetching data with query [%s]:\n[%s]", query, e)
 	}, finally={
 		if (!is.null(con)) RMariaDB::dbDisconnect(con)
 	})
-	logging::logfinest("Properly retrieved %i observations.", nrow(data), logger=LOGGER.MAIN)
+	logging::logfinest("Properly retrieved %s observations.", nrow(data), logger=LOGGER.MAIN)
 	if (keep_int64==TRUE) {
 		purrr::modify_if(data, is.list, unlist) |>
 			purrr::modify_if(is.raw, as.logical) |>
@@ -552,7 +552,7 @@ upsert_table <- function(table, table_name_in_base, keycols, host="localhost", p
 		if (!nolog) logging::logwarn("You tried to insert an empty table. Leaving.", logger=LOGGER.MAIN)
 		return()
 	}
-	if (!nolog) logging::loginfo("Upserting %i rows data into table %s.", nrow(table), table_name_in_base, logger=LOGGER.MAIN)
+	if (!nolog) logging::loginfo("Upserting %s rows data into table %s.", nrow(table), table_name_in_base, logger=LOGGER.MAIN)
 
 	has_quotes <- sapply(seq(ncol(table)), function(ic) !(is.numeric(table[,ic]) || is.logical(table[,ic])))
 	pb <- if(progress_bar) create_pb(nrow(table), bar_style="pc", time_style="cd") else NULL
@@ -671,7 +671,7 @@ update_table <- function(table, table_name_in_base, keycols, host="localhost", p
 		if (!nolog) logging::logwarn("You tried to update with empty data. Leaving.", logger=LOGGER.MAIN)
 		return()
 	}
-	if (!nolog) logging::loginfo("updating %i rows data into table %s.", nrow(table), table_name_in_base, logger=LOGGER.MAIN)
+	if (!nolog) logging::loginfo("updating %s rows data into table %s.", nrow(table), table_name_in_base, logger=LOGGER.MAIN)
 
 	has_quotes <- table |> purrr::map_lgl(~!(is.numeric(.x)||is.logical(.x)))
 	pb <- if(progress_bar) create_pb(nrow(table), bar_style="pc", time_style="cd") else NULL
