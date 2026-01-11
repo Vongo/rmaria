@@ -11,9 +11,10 @@ pull_data(
   user,
   password,
   query,
-  scroll_size = NA,
   verbose = TRUE,
-  keep_int64 = FALSE
+  keep_int64 = FALSE,
+  retries = 1,
+  retry_delay = 1
 )
 }
 \arguments{
@@ -29,9 +30,13 @@ pull_data(
 
 \item{query}{query to execute}
 
-\item{scroll_size}{scroll size}
+\item{verbose}{output current state and warnings}
 
-\item{verbose}{output current state}
+\item{keep_int64}{if TRUE, keeps int64 columns as-is; if FALSE (default), converts to numeric}
+
+\item{retries}{number of retry attempts for transient failures (default: 3)}
+
+\item{retry_delay}{delay in seconds between retry attempts (default: 1)}
 }
 \description{
 Simple method that executes your select query and returns its results in a data.table.

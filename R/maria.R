@@ -62,35 +62,93 @@ selectq <- function(query, ...) {
 #' @param user user
 #' @param password password
 #' @param query query to execute
-#' @param scroll_size scroll size
-#' @param verbose output current state
+#' @param verbose output current state and warnings
+#' @param keep_int64 if TRUE, keeps int64 columns as-is; if FALSE (default), converts to numeric
+#' @param retries number of retry attempts for transient failures (default: 3)
+#' @param retry_delay delay in seconds between retry attempts (default: 1)
 #' @import magrittr
 #' @keywords mysql select
 #' @seealso insert_table
 #' @export
 #' @examples
 #' \dontrun{data <- pull_data(host=HOST, db=DB, user=user, password=pwd, query="select * from table;")}
-pull_data <- function(host="localhost", port=3306, db, user, password, query, scroll_size=NA, verbose=TRUE, keep_int64=FALSE) {
+pull_data <- function(host="localhost", port=3306, db, user, password, query, verbose=TRUE, keep_int64=FALSE, retries=1, retry_delay=1) {
 	init()
 
-	logging::logfinest("Fetching data with query: \n\t%s.", query, logger=LOGGER.MAIN)
-	con <- NULL
-	tryCatch({
-		con <- RMariaDB::dbConnect(RMariaDB::MariaDB(), user=user, password=password, dbname=db, host=host, port=port)
-		RMariaDB::dbExecute(con, 'set character set "utf8"')
-		data <- RMariaDB::dbGetQuery(con, query)
-	}, error=function(e) {
-		logging::logerror("Error while fetching data with query [%s]:\n[%s]", query, e)
-	}, finally={
-		if (!is.null(con)) RMariaDB::dbDisconnect(con)
-	})
-	logging::logfinest("Properly retrieved %s observations.", nrow(data), logger=LOGGER.MAIN)
+	# Input validation
+	if (missing(query) || is.null(query) || !is.character(query) || nchar(trimws(query)) == 0) {
+		stop("pull_data: 'query' must be a non-empty character string")
+	}
+	if (missing(db) || is.null(db) || !is.character(db) || nchar(trimws(db)) == 0) {
+		stop("pull_data: 'db' must be a non-empty character string")
+	}
+	if (missing(user) || is.null(user) || !is.character(user)) {
+		stop("pull_data: 'user' must be a character string")
+	}
+	if (missing(password) || is.null(password) || !is.character(password)) {
+		stop("pull_data: 'password' must be a character string")
+	}
+
+	if (verbose) {
+		logging::logfinest("Fetching data with query: \n\t%s.", query, logger=LOGGER.MAIN)
+	}
+
+	state <- new.env()
+	state$data <- NULL
+	state$last_error <- NULL
+	attempt <- 0
+
+	while (attempt < retries) {
+		attempt <- attempt + 1
+		con <- NULL
+
+		result <- tryCatch({
+			con <- RMariaDB::dbConnect(RMariaDB::MariaDB(), user=user, password=password, dbname=db, host=host, port=port)
+			RMariaDB::dbExecute(con, 'set character set "utf8"')
+			state$data <- RMariaDB::dbGetQuery(con, query)
+			TRUE
+		}, error=function(e) {
+			state$last_error <- e
+			if (verbose) {
+				logging::logwarn("Attempt %d/%d failed for query [%s]: %s", attempt, retries, query, conditionMessage(e), logger=LOGGER.MAIN)
+			}
+			FALSE
+		}, finally={
+			if (!is.null(con)) {
+				tryCatch(
+					RMariaDB::dbDisconnect(con),
+					error=function(e) {
+						if (verbose) logging::logwarn("Failed to disconnect: %s", conditionMessage(e), logger=LOGGER.MAIN)
+					}
+				)
+			}
+		})
+
+		if (isTRUE(result)) {
+			break
+		}
+
+		if (attempt < retries) {
+			Sys.sleep(retry_delay)
+		}
+	}
+
+	if (is.null(state$data)) {
+		error_msg <- if (!is.null(state$last_error)) conditionMessage(state$last_error) else "Unknown error"
+		logging::logerror("Error while fetching data with query [%s] after %d attempts:\n[%s]", query, retries, error_msg, logger=LOGGER.MAIN)
+		stop(sprintf("pull_data failed after %d attempts: %s", retries, error_msg))
+	}
+
+	if (verbose) {
+		logging::logfinest("Properly retrieved %s observations.", nrow(state$data), logger=LOGGER.MAIN)
+	}
+
 	if (keep_int64==TRUE) {
-		purrr::modify_if(data, is.list, unlist) |>
+		purrr::modify_if(state$data, is.list, unlist) |>
 			purrr::modify_if(is.raw, as.logical) |>
 			data.table::as.data.table()
 	} else {
-		purrr::modify_if(data, is.list, unlist) |>
+		purrr::modify_if(state$data, is.list, unlist) |>
 			purrr::modify_if(is.raw, as.logical) |>
 			purrr::modify_if(bit64::is.integer64, as.numeric) |>
 			data.table::as.data.table()
