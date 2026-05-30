@@ -474,7 +474,7 @@ edq <- function(str) {
 #' @export
 #' @examples
 #' \dontrun{data <- insert_table(iris, "iris_name_in_database", host=HOST, db=DB, user=user, password=pwd)}
-insert_table <- function(table, table_name_in_base, host="localhost", port=3306, db, user, password, chunk_size=NA, progress_bar=TRUE, ignore=TRUE, nolog=FALSE, allow.backslash=FALSE) {
+insert_table <- function(table, table_name_in_base, host="localhost", port=3306, db, user, password, chunk_size=NA, progress_bar=interactive(), ignore=TRUE, nolog=FALSE, allow.backslash=FALSE) {
 	init()
 	if (nrow(table) == 0) {
 		if (!nolog) logging::logwarn("You tried to insert an empty table. Leaving.", logger=LOGGER.MAIN)
@@ -597,7 +597,7 @@ upsertq <- function(table, table_name_in_base, ...) {
 #' @examples
 #' \dontrun{data <- insert_table(iris, "iris_name_in_database", keycols=c("id"), host=HOST, db=DB, user=user, password=pwd)}
 upsert_table <- function(table, table_name_in_base, keycols, host="localhost", port=3306, db, user, password,
-	progress_bar=TRUE, nolog=FALSE
+	progress_bar=interactive(), nolog=FALSE
 ) {
 	# INSERT INTO `item`
 	# (`item_name`, items_in_stock)
