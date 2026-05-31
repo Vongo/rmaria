@@ -13,7 +13,7 @@ upsert_table(
   db,
   user,
   password,
-  progress_bar = TRUE,
+  progress_bar = interactive(),
   nolog = FALSE
 )
 }

@@ -13,7 +13,7 @@ insert_table(
   user,
   password,
   chunk_size = NA,
-  progress_bar = TRUE,
+  progress_bar = interactive(),
   ignore = TRUE,
   nolog = FALSE,
   allow.backslash = FALSE
