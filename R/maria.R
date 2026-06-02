@@ -489,7 +489,7 @@ edq <- function(str) {
 #' @export
 #' @examples
 #' \dontrun{data <- insert_table(iris, "iris_name_in_database", host=HOST, db=DB, user=user, password=pwd)}
-insert_table <- function(table, table_name_in_base, host="localhost", port=3306, db, user, password, chunk_size=NA, progress_bar=TRUE, ignore=TRUE, nolog=FALSE, allow.backslash=FALSE) {
+insert_table <- function(table, table_name_in_base, host="localhost", port=3306, db, user, password, chunk_size=NA, progress_bar=interactive(), ignore=TRUE, nolog=FALSE, allow.backslash=FALSE) {
   init()
   table <- as.data.frame(table)                                  # data.table-safe
   if (nrow(table) == 0) {
@@ -596,7 +596,7 @@ upsertq <- function(table, table_name_in_base, ...) {
 #' @examples
 #' \dontrun{upsert_table(my_data, "table_name", keycols=c("id"), host=HOST, db=DB, user=USER, password=PWD)}
 upsert_table <- function(table, table_name_in_base, keycols, host="localhost", port=3306, db, user, password,
-	progress_bar=TRUE, nolog=FALSE
+	progress_bar=interactive(), nolog=FALSE
 ) {
   init()
   table <- as.data.frame(table)                                  # data.table-safe
