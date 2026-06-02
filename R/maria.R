@@ -480,6 +480,7 @@ edq <- function(str) {
 #' @param progress_bar nice progress bar to use, it's recommended to disable it in log mode
 #' @param ignore should we ignore observations that produce errors?
 #' @param nolog avoid any writing to the console
+#' @param allow.backslash deprecated and ignored; backslashes are now escaped correctly by DBI
 #' @keywords mysql insert
 #' @details It's important to be aware that both input table and table in database should have the same schema (matching names, matching types).
 #' @seealso pull_data, selectq, insertq
@@ -487,60 +488,44 @@ edq <- function(str) {
 #' @examples
 #' \dontrun{data <- insert_table(iris, "iris_name_in_database", host=HOST, db=DB, user=user, password=pwd)}
 insert_table <- function(table, table_name_in_base, host="localhost", port=3306, db, user, password, chunk_size=NA, progress_bar=TRUE, ignore=TRUE, nolog=FALSE, allow.backslash=FALSE) {
-	init()
-	if (nrow(table) == 0) {
-		if (!nolog) logging::logwarn("You tried to insert an empty table. Leaving.", logger=LOGGER.MAIN)
-		return()
-	}
-	if (!nolog) logging::loginfo("Inserting data into table %s.", table_name_in_base, logger=LOGGER.MAIN)
-	if (is.na(chunk_size)) {
-		chunk_size <- max(min(10000, nrow(table)/25), 100)
-	}
-	chunk_size <- min(chunk_size, nrow(table))
-	n_iter <- ceiling(nrow(table)/chunk_size)
-	has_quotes <- sapply(seq(ncol(table)), function(ic) !(is.numeric(table[,ic]) || is.logical(table[,ic])))
-	pb <- if(progress_bar) create_pb(n_iter, bar_style="pc", time_style="cd") else NULL
-	for (i in seq(n_iter)) {
-		query <- paste0("INSERT ", `if`(ignore, "IGNORE ", ""), "INTO ", table_name_in_base, "(",
-			paste0(colnames(table), collapse=","), ") VALUES ")
-		vals <- character(0)
-		for (j in seq(chunk_size)) {
-			k <- (i-1)*chunk_size+j
-			if (k <= nrow(table)) {
-				vals[j] <- paste0("(",
-					paste0(
-						sapply(seq(ncol(table)), function(ic) {
-							if ((table[k, ic] %>% {is.na(.) || is.nan(.) || (is.numeric(.) && !is.finite(.))})) {
-								"Qù@ñÐĲ€T@IS©H€ZMŒZI//@"
-							} else {
-								if(has_quotes[ic]) {
-									table[k, ic] |>
-										gsub("'", '\'', x=_) |>
-										gsub('"', '\'', x=_) %>%
-										{`if`(allow.backslash, gsub("\\\\0", "/0", .), gsub("\\\\", "/", .))} %>%
-										{paste0('"', ., '"')}
-								} else {
-									table[k, ic]
-								}
-							}
-						}), collapse=","
-					), ")"
-				)
-			}
-		}
-		query <- gsub("Qù@ñÐĲ€T@IS©H€ZMŒZI//@", "NULL", paste0(query, paste0(vals, collapse=',')))
-		tryCatch({
-				exec_query(host=host, port=port, db=db, user=user, password=password, query=query)
-			},
-			warn=function(w) {
-				if (!nolog) logging::logwarn("Warning while inserting query [%s]: [%s]", query, w, logger=LOGGER.MAIN)
-			},
-			error=function(e) {
-				if (!nolog) logging::logerror("Error while inserting query [%s]: [%s]", query, e, logger=LOGGER.MAIN)
-			}
-		)
-		if (progress_bar) update_pb(pb, i)
-	}
+  init()
+  table <- as.data.frame(table)                                  # data.table-safe
+  if (nrow(table) == 0) {
+    if (!nolog) logging::logwarn("You tried to insert an empty table. Leaving.", logger=LOGGER.MAIN)
+    return(invisible())
+  }
+  if (!nolog) logging::loginfo("Inserting data into table %s.", table_name_in_base, logger=LOGGER.MAIN)
+  if (is.na(chunk_size)) {
+    chunk_size <- max(min(10000L, nrow(table) %/% 25L), 100L)     # integer
+  }
+  chunk_size <- as.integer(min(chunk_size, nrow(table)))
+  n_iter <- as.integer(ceiling(nrow(table) / chunk_size))
+
+  con <- .maria_connect(host, port, db, user, password)          # one connection
+  on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+
+  tbl_sql  <- DBI::dbQuoteIdentifier(con, table_name_in_base)
+  cols_sql <- paste(DBI::dbQuoteIdentifier(con, colnames(table)), collapse = ",")
+  pb <- if (progress_bar) create_pb(n_iter, bar_style="pc", time_style="cd") else NULL
+
+  for (i in seq_len(n_iter)) {
+    rows <- ((i - 1L) * chunk_size + 1L):min(i * chunk_size, nrow(table))
+    quoted <- lapply(table[rows, , drop = FALSE], function(col) {
+      if (is.numeric(col)) col[!is.finite(col)] <- NA   # NA/NaN/Inf/-Inf -> SQL NULL
+      as.character(DBI::dbQuoteLiteral(con, col))
+    })
+    tuples <- do.call(paste, c(quoted, sep = ","))
+    values_sql <- paste0("(", tuples, ")", collapse = ",")
+    query <- paste0("INSERT ", if (ignore) "IGNORE " else "", "INTO ", tbl_sql,
+                    " (", cols_sql, ") VALUES ", values_sql)
+    tryCatch(
+      RMariaDB::dbExecute(con, query),
+      error = function(e) if (!nolog) logging::logerror(
+        "Error while inserting chunk %d/%d: %s", i, n_iter, conditionMessage(e), logger=LOGGER.MAIN)
+    )
+    if (progress_bar) update_pb(pb, i)
+  }
+  invisible()
 }
 
 
