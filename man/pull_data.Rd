@@ -34,7 +34,7 @@ pull_data(
 
 \item{keep_int64}{if TRUE, keeps int64 columns as-is; if FALSE (default), converts to numeric}
 
-\item{retries}{number of retry attempts for transient failures (default: 1)}
+\item{retries}{total number of query attempts including the first; default 1 means no retry}
 
 \item{retry_delay}{delay in seconds between retry attempts (default: 1)}
 }

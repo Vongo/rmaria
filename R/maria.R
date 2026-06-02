@@ -12,7 +12,14 @@ init()
     dbname = db, host = host, port = port, user = user, password = password,
     load_data_local_infile = local_infile
   )
-  RMariaDB::dbExecute(con, "SET NAMES utf8mb4")
+  tryCatch(
+    RMariaDB::dbExecute(con, "SET NAMES utf8mb4"),
+    error = function(e) {
+      RMariaDB::dbDisconnect(con)
+      stop(sprintf(".maria_connect: 'SET NAMES utf8mb4' failed (host=%s, db=%s): %s",
+                   host, db, conditionMessage(e)), call. = FALSE)
+    }
+  )
   con
 }
 
@@ -72,7 +79,7 @@ selectq <- function(query, ...) {
 #' @param query query to execute
 #' @param verbose output current state and warnings
 #' @param keep_int64 if TRUE, keeps int64 columns as-is; if FALSE (default), converts to numeric
-#' @param retries number of retry attempts for transient failures (default: 1)
+#' @param retries total number of query attempts including the first; default 1 means no retry
 #' @param retry_delay delay in seconds between retry attempts (default: 1)
 #' @import magrittr
 #' @keywords mysql select
@@ -168,12 +175,12 @@ pull_data <- function(host="localhost", port=3306, db, user, password, query, ve
 #' Simple wrapper around `exec_query` method, that makes credential use transparent.
 #' Requires credentials to be loaded, obviously.
 #' @param query query to execute
-#' @param ... any argument that can be sent to `pull_data`
+#' @param ... any other argument passed to \code{exec_query}
 #' @keywords mysql select
 #' @seealso exec_query pull_data
 #' @export
 #' @examples
-#' \dontrun{execq('set character set "utf8"')}
+#' \dontrun{execq("TRUNCATE TABLE foo;")}
 execq <- function(query, ...) {
 	target_e <- environment()
 	source_environments <- list(
@@ -220,7 +227,7 @@ execq <- function(query, ...) {
 #' @seealso insert_table
 #' @export
 #' @examples
-#' \dontrun{data <- pull_data(host=HOST, db=DB, user=user, password=pwd, query="select * from table;")}
+#' \dontrun{exec_query(host=HOST, db=DB, user=USER, password=PWD, query="TRUNCATE TABLE foo;")}
 exec_query <- function(host="localhost", port=3306, db, user, password, query) {
   con <- .maria_connect(host, port, db, user, password)
   on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
@@ -318,12 +325,11 @@ insert_table_local <- function(table, table_name_in_base, preface_queries=charac
 #' @examples
 #' \dontrun{truncate_table(table="foo", host=HOST, db=DB, user=USER, password=PWD)}
 truncate_table <- function(table_name_in_base, host="localhost", port=3306, db, user, password) {
-	init()
-	logging::loginfo("Truncating table %s.", table_name_in_base, logger=LOGGER.MAIN)
-	query <- paste0("TRUNCATE TABLE `", table_name_in_base, "`;")
-	con <- .maria_connect(host, port, db, user, password)
-	on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
-	RMariaDB::dbExecute(con, query)
+  init()
+  logging::loginfo("Truncating table %s.", table_name_in_base, logger=LOGGER.MAIN)
+  con <- .maria_connect(host, port, db, user, password)
+  on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+  RMariaDB::dbExecute(con, paste0("TRUNCATE TABLE ", DBI::dbQuoteIdentifier(con, table_name_in_base)))
 }
 
 insert_source_full_file <- function(src, host="localhost", port=3306, db, user, password) {
@@ -387,7 +393,7 @@ insertq <- function(table, table_name_in_base, ...) {
 #' Delete query
 #'
 #' Delete from table rows that match certain criteria
-#' @param table_name_in_base table in \code{db} to insert data into
+#' @param table_name_in_base table in \code{db} to delete rows from
 #' @param where SQL WHERE clause (without the WHERE keyword) selecting rows to delete. Interpolated verbatim into the statement -- the caller is responsible for sanitizing any untrusted input (this fragment is NOT escaped).
 #' @param host host
 #' @param port port
@@ -412,7 +418,7 @@ delete_from_table <- function(table_name_in_base, where, host="localhost", port=
 #' Simplified delete query
 #'
 #' Delete from table rows that match certain criteria
-#' @param table_name_in_base table in \code{db} to insert data into
+#' @param table_name_in_base table in \code{db} to delete rows from
 #' @param where SQL WHERE clause (without the WHERE keyword) selecting rows to delete. Interpolated verbatim into the statement -- the caller is responsible for sanitizing any untrusted input (this fragment is NOT escaped).
 #' @param ... any other parameter passed to \code{delete_from_table}
 #' @keywords mysql delete
@@ -475,7 +481,7 @@ edq <- function(str) {
 #' @param chunk_size how many elements should be inserted at a time
 #' @param progress_bar nice progress bar to use, it's recommended to disable it in log mode
 #' @param ignore should we ignore observations that produce errors?
-#' @param nolog avoid any writing to the console
+#' @param nolog avoid any writing to the console (when TRUE, errors are not logged either)
 #' @param allow.backslash deprecated and ignored; backslashes are now escaped correctly by DBI
 #' @keywords mysql insert
 #' @details It's important to be aware that both input table and table in database should have the same schema (matching names, matching types).
@@ -579,25 +585,19 @@ upsertq <- function(table, table_name_in_base, ...) {
 #' @param user user
 #' @param password password
 #' @param table data.frame or data.table to insert
-#' @param table_name_in_base table in {db} to insert data into
+#' @param table_name_in_base table in {db} to upsert data into
 #' @param progress_bar nice progress bar to use, it's recommended to disable it in log mode
-#' @param nolog avoid any writing to the console
+#' @param nolog avoid any writing to the console (when TRUE, errors are not logged either)
 #' @param keycols character vector naming the key column(s) used to identify rows (excluded from the SET/UPDATE clause)
 #' @keywords mysql insert
 #' @details It's important to be aware that both input table and table in database should have the same schema (matching names, matching types).
 #' @seealso pull_data, selectq, insertq
 #' @export
 #' @examples
-#' \dontrun{data <- insert_table(iris, "iris_name_in_database", keycols=c("id"), host=HOST, db=DB, user=user, password=pwd)}
+#' \dontrun{upsert_table(my_data, "table_name", keycols=c("id"), host=HOST, db=DB, user=USER, password=PWD)}
 upsert_table <- function(table, table_name_in_base, keycols, host="localhost", port=3306, db, user, password,
 	progress_bar=TRUE, nolog=FALSE
 ) {
-	# INSERT INTO `item`
-	# (`item_name`, items_in_stock)
-	# VALUES( 'A', 27)
-	# ON DUPLICATE KEY UPDATE
-	# `new_items_count` = `new_items_count` + 27
-
   init()
   table <- as.data.frame(table)                                  # data.table-safe
   if (nrow(table) == 0) {
@@ -638,6 +638,9 @@ upsert_table <- function(table, table_name_in_base, keycols, host="localhost", p
     set_parts <- set_parts[nzchar(set_parts)]
     # Empty when all non-key cols are null-ish OR there are no non-key cols (keys-only table); INSERT IGNORE is correct in both.
     if (length(set_parts) == 0L) {
+      if (!nolog) logging::logwarn(
+        "upsert_table: row %d has no updatable (non-key, non-NULL) columns; using INSERT IGNORE (existing row left unchanged)",
+        i, logger = LOGGER.MAIN)
       query <- paste0("INSERT IGNORE INTO ", tbl_sql, " (", cols_sql, ") VALUES ", values_sql, ";")
     } else {
       query <- paste0("INSERT INTO ", tbl_sql, " (", cols_sql, ") VALUES ", values_sql,
@@ -700,23 +703,23 @@ updateq <- function(table, table_name_in_base, ...) {
 
 #' Update
 #'
-#' Simple method that inserts the input data.frame or data.table into the designated table, or updates it if the key already exists.
+#' Simple method that updates rows in the designated table, matching existing rows on the key column(s).
 #' @param host host
 #' @param port port
 #' @param db default database name
 #' @param user user
 #' @param password password
-#' @param table data.frame or data.table to insert
-#' @param table_name_in_base table in {db} to insert data into
+#' @param table data.frame or data.table whose rows update matching rows in the database
+#' @param table_name_in_base table in {db} to update rows in
 #' @param progress_bar nice progress bar to use, it's recommended to disable it in log mode
-#' @param nolog avoid any writing to the console
+#' @param nolog avoid any writing to the console (when TRUE, errors are not logged either)
 #' @param keycols character vector naming the key column(s) used to identify rows (excluded from the SET/UPDATE clause)
-#' @keywords mysql insert
+#' @keywords mysql update
 #' @details It's important to be aware that both input table and table in database should have the same schema (matching names, matching types).
 #' @seealso pull_data, selectq, insertq
 #' @export
 #' @examples
-#' \dontrun{data <- insert_table(iris, "iris_name_in_database", keycols=c("id"), host=HOST, db=DB, user=user, password=pwd)}
+#' \dontrun{update_table(my_data, "table_name", keycols=c("id"), host=HOST, db=DB, user=USER, password=PWD)}
 update_table <- function(table, table_name_in_base, keycols, host="localhost", port=3306, db, user, password,
 	progress_bar=interactive(), nolog=FALSE
 ) {

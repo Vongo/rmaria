@@ -8,7 +8,7 @@
 # (e.g. non-interactive sessions, CI). Falls back to $COLUMNS then options(width).
 .term_width <- function() {
 	w <- suppressWarnings(tryCatch(
-		as.integer(strsplit(system("stty size", intern = TRUE), " ")[[1]])[2],
+		as.integer(strsplit(system("stty size", intern = TRUE, ignore.stderr = TRUE), " ")[[1]])[2],
 		error = function(e) NA_integer_,
 		warning = function(w) NA_integer_
 	))

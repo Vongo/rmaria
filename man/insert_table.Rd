@@ -40,7 +40,7 @@ insert_table(
 
 \item{ignore}{should we ignore observations that produce errors?}
 
-\item{nolog}{avoid any writing to the console}
+\item{nolog}{avoid any writing to the console (when TRUE, errors are not logged either)}
 
 \item{allow.backslash}{deprecated and ignored; backslashes are now escaped correctly by DBI}
 }

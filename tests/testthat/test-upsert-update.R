@@ -130,3 +130,31 @@ test_that("update_table skips an incomplete composite key instead of broadening 
     expect_equal(got$val, c(10, 20))   # NOTHING changed; with the bug both would become 99
   })
 })
+
+test_that("upsert_table stores an injection payload as literal data", {
+  skip_if_no_db(); e <- db_env()
+  with_test_table("CREATE TABLE t_upinj (id INT PRIMARY KEY, name VARCHAR(100)) CHARACTER SET utf8mb4", "t_upinj", {
+    payload <- "x'); DROP TABLE t_upinj; --"
+    upsert_table(data.frame(id=1, name=payload), "t_upinj", keycols="id",
+                 host=e$host, port=e$port, db=e$db, user=e$user, password=e$pwd, progress_bar=FALSE)
+    upsert_table(data.frame(id=1, name=payload), "t_upinj", keycols="id",
+                 host=e$host, port=e$port, db=e$db, user=e$user, password=e$pwd, progress_bar=FALSE)
+    got <- pull_data(host=e$host, port=e$port, db=e$db, user=e$user, password=e$pwd,
+                     query="SELECT name FROM t_upinj WHERE id=1", verbose=FALSE)
+    expect_equal(got$name[1], payload)   # table still exists, value literal
+  })
+})
+
+test_that("update_table skips (does not NULL) a non-key column whose value is NA", {
+  skip_if_no_db(); e <- db_env()
+  with_test_table("CREATE TABLE t_updna (id INT PRIMARY KEY, a VARCHAR(10), b INT)", "t_updna", {
+    con0 <- test_con(); on.exit(RMariaDB::dbDisconnect(con0), add=TRUE)
+    RMariaDB::dbExecute(con0, "INSERT INTO t_updna VALUES (1, 'keep', 5)")
+    update_table(data.frame(id=1L, a=NA_character_, b=9L), "t_updna", keycols="id",
+                 host=e$host, port=e$port, db=e$db, user=e$user, password=e$pwd, progress_bar=FALSE)
+    got <- pull_data(host=e$host, port=e$port, db=e$db, user=e$user, password=e$pwd,
+                     query="SELECT a, b FROM t_updna WHERE id=1", verbose=FALSE)
+    expect_equal(got$a[1], "keep")   # NA column skipped, not NULLed
+    expect_equal(got$b[1], 9L)        # other column updated
+  })
+})

@@ -36,3 +36,15 @@ test_that("delete_from_table rejects an empty/missing where clause (no full-tabl
     "non-empty SQL WHERE"
   )
 })
+
+test_that("truncate_table empties the table", {
+  skip_if_no_db(); e <- db_env()
+  with_test_table("CREATE TABLE t_trunc (id INT)", "t_trunc", {
+    exec_query(host=e$host, port=e$port, db=e$db, user=e$user, password=e$pwd,
+               query="INSERT INTO t_trunc (id) VALUES (1),(2),(3)")
+    truncate_table("t_trunc", host=e$host, port=e$port, db=e$db, user=e$user, password=e$pwd)
+    n <- pull_data(host=e$host, port=e$port, db=e$db, user=e$user, password=e$pwd,
+                   query="SELECT COUNT(*) AS n FROM t_trunc", verbose=FALSE)$n
+    expect_equal(n, 0)
+  })
+})
