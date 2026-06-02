@@ -1,9 +1,5 @@
 init <- function() {
 	LOGGER.MAIN <<- "com.vongo.rmaria"
-	library(rutils, quietly=TRUE, warn.conflicts=FALSE)
-	library(magrittr, quietly=TRUE, warn.conflicts=FALSE)
-	library(logging, quietly=TRUE, warn.conflicts=FALSE)
-	library(RMariaDB, quietly=TRUE, warn.conflicts=FALSE)
 	TRUE
 }
 init()
@@ -79,6 +75,7 @@ selectq <- function(query, ...) {
 #' @param retries number of retry attempts for transient failures (default: 1)
 #' @param retry_delay delay in seconds between retry attempts (default: 1)
 #' @import magrittr
+#' @importFrom rutils "%ni%" create_pb update_pb
 #' @keywords mysql select
 #' @seealso insert_table
 #' @export
@@ -392,7 +389,7 @@ insertq <- function(table, table_name_in_base, ...) {
 #'
 #' Delete from table rows that match certain criteria
 #' @param table_name_in_base table in \code{db} to insert data into
-#' @param where SQL WHERE clause (without the WHERE keyword) selecting rows to delete. Interpolated verbatim into the statement — the caller is responsible for sanitizing any untrusted input (this fragment is NOT escaped).
+#' @param where SQL WHERE clause (without the WHERE keyword) selecting rows to delete. Interpolated verbatim into the statement -- the caller is responsible for sanitizing any untrusted input (this fragment is NOT escaped).
 #' @param host host
 #' @param port port
 #' @param db default database name
@@ -414,7 +411,8 @@ delete_from_table <- function(table_name_in_base, where, host="localhost", port=
 #'
 #' Delete from table rows that match certain criteria
 #' @param table_name_in_base table in \code{db} to insert data into
-#' @param where SQL WHERE clause (without the WHERE keyword) selecting rows to delete. Interpolated verbatim into the statement — the caller is responsible for sanitizing any untrusted input (this fragment is NOT escaped).
+#' @param where SQL WHERE clause (without the WHERE keyword) selecting rows to delete. Interpolated verbatim into the statement -- the caller is responsible for sanitizing any untrusted input (this fragment is NOT escaped).
+#' @param ... any other parameter passed to \code{delete_from_table}
 #' @keywords mysql delete
 #' @export
 #' @examples
