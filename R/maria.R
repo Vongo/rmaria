@@ -728,59 +728,51 @@ update_table <- function(table, table_name_in_base, keycols, host="localhost", p
 	# SET `new_items_count` = `new_items_count` + 27
 	# WHERE `id`=42;
 
-	init()
-	if (nrow(table) == 0) {
-		if (!nolog) logging::logwarn("You tried to update with empty data. Leaving.", logger=LOGGER.MAIN)
-		return()
-	}
-	if (!nolog) logging::loginfo("updating %s rows data into table %s.", nrow(table), table_name_in_base, logger=LOGGER.MAIN)
+  init()
+  table <- as.data.frame(table)                                  # data.table-safe
+  if (nrow(table) == 0) {
+    if (!nolog) logging::logwarn("You tried to update with empty data. Leaving.", logger=LOGGER.MAIN)
+    return(invisible())
+  }
+  if (missing(keycols) || length(keycols) == 0L) {
+    stop("update_table: 'keycols' must name the key column(s) used in the WHERE clause")
+  }
+  unknown_keys <- setdiff(keycols, colnames(table))
+  if (length(unknown_keys) > 0L) {
+    stop("update_table: keycols not found in table: ", paste(unknown_keys, collapse = ", "))
+  }
+  if (!nolog) logging::loginfo("Updating %s rows data into table %s.", nrow(table), table_name_in_base, logger=LOGGER.MAIN)
 
-	has_quotes <- table |> purrr::map_lgl(~!(is.numeric(.x)||is.logical(.x)))
-	pb <- if(progress_bar) create_pb(nrow(table), bar_style="pc", time_style="cd") else NULL
-	for (i in seq(nrow(table))) {
-		prefix <- paste0("UPDATE ", table_name_in_base, " SET ")
-		suffix <- paste(
-			which(colnames(table) %ni% keycols) |> sapply(function(ic) {
-				value <- table[i, ic] |> unlist()
-				if (is.na(value) || is.nan(value) || (is.numeric(value) && !is.finite(value))) {
-					""
-				} else {
-					paste(
-						colnames(table)[ic],
-						`if`(has_quotes[ic], paste0("'", gsub("'", '\"', value), "'"), value),
-						sep="="
-					)
-				}
-			}) %>% .[purrr::map_lgl(., ~nchar(.x)>0)] |> paste(collapse = ","),
-			"where",
-			which(colnames(table) %in% keycols) |> sapply(function(ic) {
-				value <- table[i, ic] |> unlist()
-				if (is.na(value) || is.nan(value) || (is.numeric(value) && !is.finite(value))) {
-					""
-				} else {
-					paste(
-						colnames(table)[ic],
-						`if`(has_quotes[ic], paste0("'", gsub("'", '\"', value), "'"), value),
-						sep="="
-					)
-				}
-			}) %>% .[purrr::map_lgl(., ~nchar(.x)>0)] |> paste(collapse = " and ")
-		)
-		if (grepl("^[ ]*where", suffix) | grepl("where[ ]*$", suffix)) {
-			if (!nolog) logging::logfinest("Skipping incomplete row with index [%s]", i, logger=LOGGER.MAIN)
-			next
-		}
-		query <- paste0(prefix, suffix, ";")
-		tryCatch({
-				exec_query(host, port, db, user, password, query)
-			},
-			warn=function(w) {
-				if (!nolog) logging::logwarn("Warning while updating query [%s]: [%s]", query, w, logger=LOGGER.MAIN)
-			},
-			error=function(e) {
-				if (!nolog) logging::logerror("Error while updating query [%s]: [%s]", query, e, logger=LOGGER.MAIN)
-			}
-		)
-		if (progress_bar) update_pb(pb, i)
-	}
+  con <- .maria_connect(host, port, db, user, password)          # one connection
+  on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+
+  tbl_sql  <- DBI::dbQuoteIdentifier(con, table_name_in_base)
+  set_cols <- which(colnames(table) %ni% keycols)
+  key_cols <- which(colnames(table) %in% keycols)
+  pb <- if (progress_bar) create_pb(nrow(table), bar_style="pc", time_style="cd") else NULL
+
+  for (i in seq_len(nrow(table))) {
+    clause <- function(ic) {
+      v <- table[i, ic]
+      if (is.numeric(v) && !is.finite(v)) v <- NA          # NA/NaN/Inf/-Inf -> skip
+      if (is.na(v)) return("")
+      paste0(DBI::dbQuoteIdentifier(con, colnames(table)[ic]), "=",
+             as.character(DBI::dbQuoteLiteral(con, v)))
+    }
+    set_parts   <- vapply(set_cols, clause, character(1)); set_parts   <- set_parts[nzchar(set_parts)]
+    where_parts <- vapply(key_cols, clause, character(1)); where_parts <- where_parts[nzchar(where_parts)]
+    if (length(set_parts) == 0L || length(where_parts) < length(key_cols)) {
+      if (!nolog) logging::logfinest("Skipping incomplete row with index [%s]", i, logger=LOGGER.MAIN)
+      next
+    }
+    query <- paste0("UPDATE ", tbl_sql, " SET ", paste(set_parts, collapse = ","),
+                    " WHERE ", paste(where_parts, collapse = " AND "), ";")
+    tryCatch(
+      RMariaDB::dbExecute(con, query),
+      error = function(e) if (!nolog) logging::logerror(
+        "Error while updating row %d: %s", i, conditionMessage(e), logger=LOGGER.MAIN)
+    )
+    if (progress_bar) update_pb(pb, i)
+  }
+  invisible()
 }
