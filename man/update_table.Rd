@@ -22,7 +22,7 @@ update_table(
 
 \item{table_name_in_base}{table in {db} to insert data into}
 
-\item{keycols}{name of the colums that}
+\item{keycols}{character vector naming the key column(s) used to identify rows (excluded from the SET/UPDATE clause)}
 
 \item{host}{host}
 

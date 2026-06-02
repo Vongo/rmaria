@@ -400,6 +400,9 @@ insertq <- function(table, table_name_in_base, ...) {
 #' @examples
 #' \dontrun{delete_from_table(table_name_in_base="foo", where="id in (1, 2, 3)", host=HOST, db=DB, user=USER, password=PWD)}
 delete_from_table <- function(table_name_in_base, where, host="localhost", port=3306, db, user, password) {
+  if (missing(where) || !is.character(where) || length(where) != 1L || !nzchar(trimws(where))) {
+    stop("delete_from_table: 'where' must be a non-empty SQL WHERE clause (use truncate_table to empty a table)")
+  }
   con <- .maria_connect(host, port, db, user, password)
   on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
   RMariaDB::dbExecute(con,
@@ -580,7 +583,7 @@ upsertq <- function(table, table_name_in_base, ...) {
 #' @param table_name_in_base table in {db} to insert data into
 #' @param progress_bar nice progress bar to use, it's recommended to disable it in log mode
 #' @param nolog avoid any writing to the console
-#' @param keycols name of the colums that
+#' @param keycols character vector naming the key column(s) used to identify rows (excluded from the SET/UPDATE clause)
 #' @keywords mysql insert
 #' @details It's important to be aware that both input table and table in database should have the same schema (matching names, matching types).
 #' @seealso pull_data, selectq, insertq
@@ -708,7 +711,7 @@ updateq <- function(table, table_name_in_base, ...) {
 #' @param table_name_in_base table in {db} to insert data into
 #' @param progress_bar nice progress bar to use, it's recommended to disable it in log mode
 #' @param nolog avoid any writing to the console
-#' @param keycols name of the colums that
+#' @param keycols character vector naming the key column(s) used to identify rows (excluded from the SET/UPDATE clause)
 #' @keywords mysql insert
 #' @details It's important to be aware that both input table and table in database should have the same schema (matching names, matching types).
 #' @seealso pull_data, selectq, insertq

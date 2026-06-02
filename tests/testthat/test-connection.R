@@ -23,3 +23,16 @@ test_that("delete_from_table deletes matching rows (refactored path)", {
     expect_equal(n, 1)
   })
 })
+
+test_that("delete_from_table rejects an empty/missing where clause (no full-table delete)", {
+  expect_error(
+    delete_from_table("t_del", "", host="127.0.0.1", port=33306, db="rmaria_test",
+                      user="root", password="test"),
+    "non-empty SQL WHERE"
+  )
+  expect_error(
+    delete_from_table("t_del", host="127.0.0.1", port=33306, db="rmaria_test",
+                      user="root", password="test"),
+    "non-empty SQL WHERE"
+  )
+})
