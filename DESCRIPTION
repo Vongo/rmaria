@@ -11,7 +11,7 @@ License: WTFPL
 Encoding: UTF-8
 LazyData: true
 RoxygenNote: 7.3.2
-Imports: logging, magrittr, rutils, RMariaDB, data.table
+Imports: logging, magrittr, rutils, RMariaDB, DBI, data.table, purrr, bit64
 Suggests: testthat (>= 3.0.0)
 Config/testthat/edition: 3
 Remotes: Vongo/rutils

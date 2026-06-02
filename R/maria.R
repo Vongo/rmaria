@@ -637,7 +637,7 @@ upsert_table <- function(table, table_name_in_base, keycols, host="localhost", p
 						sep="="
 					)
 				}
-			}) %>% .[map_lgl(., ~nchar(.x)>0)] |> paste(collapse = ",")
+			}) %>% .[purrr::map_lgl(., ~nchar(.x)>0)] |> paste(collapse = ",")
 		)
 		query <- paste0(prefix, gsub("\"Qù@ñÐĲ€T@IS©H€ZMŒZI//@\"", "NULL", values), suffix, ";")
 		tryCatch(
@@ -747,7 +747,7 @@ update_table <- function(table, table_name_in_base, keycols, host="localhost", p
 						sep="="
 					)
 				}
-			}) %>% .[map_lgl(., ~nchar(.x)>0)] |> paste(collapse = ","),
+			}) %>% .[purrr::map_lgl(., ~nchar(.x)>0)] |> paste(collapse = ","),
 			"where",
 			which(colnames(table) %in% keycols) |> sapply(function(ic) {
 				value <- table[i, ic] |> unlist()
@@ -760,7 +760,7 @@ update_table <- function(table, table_name_in_base, keycols, host="localhost", p
 						sep="="
 					)
 				}
-			}) %>% .[map_lgl(., ~nchar(.x)>0)] |> paste(collapse = " and ")
+			}) %>% .[purrr::map_lgl(., ~nchar(.x)>0)] |> paste(collapse = " and ")
 		)
 		if (grepl("^[ ]*where", suffix) | grepl("where[ ]*$", suffix)) {
 			if (!nolog) logging::logfinest("Skipping incomplete row with index [%s]", i, logger=LOGGER.MAIN)
