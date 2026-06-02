@@ -1,0 +1,33 @@
+name: R-CMD-check
+on:
+  push:
+    branches: [main, perf_refacto]
+  pull_request:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:11
+        env:
+          MARIADB_ROOT_PASSWORD: test
+          MARIADB_DATABASE: rmaria_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=3s --health-timeout=5s --health-retries=20
+    # test-only credentials; not used in production
+    env:
+      RMARIA_TEST_HOST: 127.0.0.1
+      RMARIA_TEST_PORT: 3306
+      RMARIA_TEST_DB: rmaria_test
+      RMARIA_TEST_USER: root
+      RMARIA_TEST_PWD: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: any::rcmdcheck, any::testthat, any::devtools
+      - uses: r-lib/actions/check-r-package@v2

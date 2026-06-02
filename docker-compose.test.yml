@@ -1,0 +1,16 @@
+name: rmaria-test
+services:
+  mariadb:
+    image: mariadb:11
+    # test-only credentials; not used in production
+    environment:
+      MARIADB_ROOT_PASSWORD: test
+      MARIADB_DATABASE: rmaria_test
+    ports:
+      - "3306:3306"
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
