@@ -76,7 +76,7 @@ selectq <- function(query, ...) {
 #' @param query query to execute
 #' @param verbose output current state and warnings
 #' @param keep_int64 if TRUE, keeps int64 columns as-is; if FALSE (default), converts to numeric
-#' @param retries number of retry attempts for transient failures (default: 3)
+#' @param retries number of retry attempts for transient failures (default: 1)
 #' @param retry_delay delay in seconds between retry attempts (default: 1)
 #' @import magrittr
 #' @keywords mysql select
