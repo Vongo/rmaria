@@ -272,41 +272,37 @@ insert_table_local <- function(table, table_name_in_base, preface_queries=charac
 		assign("HOST", get("HOST", envir=source_e), envir=target_e)
 		assign("PWD", get("PWD", envir=source_e), envir=target_e)
 		assign("USER", get("USER", envir=source_e), envir=target_e)
+		PORT <- if (exists("PORT", envir=source_e)) suppressWarnings(as.integer(get("PORT", envir=source_e))) else 3306L
+		if (is.na(PORT)) {
+			logging::logerror("insert_table_local: PORT is not a valid integer; defaulting to 3306.", logger=LOGGER.MAIN)
+			PORT <- 3306L
+		}
 	} else {
 		init()
 		logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
 		return(FALSE)
 	}
-	library(RMariaDB)
+	table <- as.data.frame(table)
 	con <- NULL
 	tryCatch({
-		con <- RMariaDB::dbConnect(
-			RMariaDB::MariaDB(),
-			host=HOST, db=DB, user=USER, password=PWD, port=3306,
-			load_data_local_infile=use_file
-		)
+		con <- .maria_connect(HOST, PORT, DB, USER, PWD, local_infile = use_file)
 		if (length(preface_queries)>0) {
 			for (preface_query in preface_queries) {
 				RMariaDB::dbExecute(con, preface_query)
 			}
 		}
-		RMariaDB::dbExecute(con, "set character set \"utf8mb4\"")
-		# RMariaDB::dbExecute(con, "SET character_set_client = \"utf8mb4\";")
-		# RMariaDB::dbExecute(con, "SET character_set_results = \"utf8mb4\";")
-		# RMariaDB::dbExecute(con, "SET character_set_connection = \"utf8mb4\";")
-		# print(RMariaDB::dbGetQuery(con, "SELECT @@character_set_client;"))
 		if (nrow(table)>=split_threshold) {
 			start <- 1
-			while (start < nrow(table)) {
+			while (start <= nrow(table)) {
 				end <- min(nrow(table), start+split_threshold-1)
-				RMariaDB::dbWriteTable(con, table_name_in_base, table[seq(start, end), names(table), drop=FALSE], append=TRUE)
+				RMariaDB::dbWriteTable(con, table_name_in_base, table[seq(start, end), , drop=FALSE], append=TRUE)
 				start <- end + 1
 			}
 		} else {
 			RMariaDB::dbWriteTable(con, table_name_in_base, table, append=TRUE)
 		}
 	}, error=function(e) {
-		logging::logerror("Error while inserting data into table %s: %s", table_name_in_base, e)
+		logging::logerror("Error while inserting data into table %s: %s", table_name_in_base, conditionMessage(e), logger=LOGGER.MAIN)
 	}, finally={
 		if (!is.null(con)) RMariaDB::dbDisconnect(con)
 	})
