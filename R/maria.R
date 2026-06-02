@@ -8,6 +8,18 @@ init <- function() {
 }
 init()
 
+# Internal: open one MariaDB connection with utf8mb4. Caller owns disconnect.
+.maria_connect <- function(host = "localhost", port = 3306, db, user, password,
+                           local_infile = FALSE) {
+  con <- RMariaDB::dbConnect(
+    RMariaDB::MariaDB(),
+    dbname = db, host = host, port = port, user = user, password = password,
+    load_data_local_infile = local_infile
+  )
+  RMariaDB::dbExecute(con, "SET NAMES utf8mb4")
+  con
+}
+
 #' Select
 #'
 #' Simple wrapper around `pull_data` method, that makes credential use transparent.
@@ -104,7 +116,7 @@ pull_data <- function(host="localhost", port=3306, db, user, password, query, ve
 
 		result <- tryCatch({
 			con <- RMariaDB::dbConnect(RMariaDB::MariaDB(), user=user, password=password, dbname=db, host=host, port=port)
-			RMariaDB::dbExecute(con, 'set character set "utf8"')
+			RMariaDB::dbExecute(con, "SET NAMES utf8mb4")
 			state$data <- RMariaDB::dbGetQuery(con, query)
 			TRUE
 		}, error=function(e) {
@@ -214,10 +226,9 @@ execq <- function(query, ...) {
 #' @examples
 #' \dontrun{data <- pull_data(host=HOST, db=DB, user=user, password=pwd, query="select * from table;")}
 exec_query <- function(host="localhost", port=3306, db, user, password, query) {
-	con <- RMariaDB::dbConnect(RMariaDB::MariaDB(), user=user, password=password, dbname=db, host=host, port=port)
-	RMariaDB::dbExecute(con, 'set character set "utf8"')
-	RMariaDB::dbExecute(con, query)
-	RMariaDB::dbDisconnect(con)
+  con <- .maria_connect(host, port, db, user, password)
+  on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+  RMariaDB::dbExecute(con, query)
 }
 
 #' Simplified bulk insert
@@ -318,9 +329,9 @@ truncate_table <- function(table_name_in_base, host="localhost", port=3306, db, 
 	init()
 	logging::loginfo("Truncating table %s.", table_name_in_base, logger=LOGGER.MAIN)
 	query <- paste0("TRUNCATE TABLE `", table_name_in_base, "`;")
-	con <- RMariaDB::dbConnect(RMariaDB::MariaDB(), user=user, password=password, dbname=db, host=host, port=port)
+	con <- .maria_connect(host, port, db, user, password)
+	on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
 	RMariaDB::dbExecute(con, query)
-	RMariaDB::dbDisconnect(con)
 }
 
 insert_source_full_file <- function(src, host="localhost", port=3306, db, user, password) {
@@ -385,7 +396,7 @@ insertq <- function(table, table_name_in_base, ...) {
 #'
 #' Delete from table rows that match certain criteria
 #' @param table_name_in_base table in \code{db} to insert data into
-#' @param where SQL where clause (wtihout the keyword where) specifying which rows should be deleted
+#' @param where SQL WHERE clause (without the WHERE keyword) selecting rows to delete. Interpolated verbatim into the statement — the caller is responsible for sanitizing any untrusted input (this fragment is NOT escaped).
 #' @param host host
 #' @param port port
 #' @param db default database name
@@ -396,17 +407,18 @@ insertq <- function(table, table_name_in_base, ...) {
 #' @examples
 #' \dontrun{delete_from_table(table_name_in_base="foo", where="id in (1, 2, 3)", host=HOST, db=DB, user=USER, password=PWD)}
 delete_from_table <- function(table_name_in_base, where, host="localhost", port=3306, db, user, password) {
-	con <- RMariaDB::dbConnect(RMariaDB::MariaDB(), user=user, password=password, dbname=db, host=host, port=port)
-	RMariaDB::dbExecute(con, 'set character set "utf8"')
-	suppressWarnings(RMariaDB::dbExecute(con, paste0("DELETE FROM ", table_name_in_base, " WHERE ", where)))
-	RMariaDB::dbDisconnect(con)
+  con <- .maria_connect(host, port, db, user, password)
+  on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+  RMariaDB::dbExecute(con,
+    paste0("DELETE FROM ", DBI::dbQuoteIdentifier(con, table_name_in_base),
+           " WHERE ", where))
 }
 
 #' Simplified delete query
 #'
 #' Delete from table rows that match certain criteria
 #' @param table_name_in_base table in \code{db} to insert data into
-#' @param where SQL where clause (wtihout the keyword where) specifying which rows should be deleted
+#' @param where SQL WHERE clause (without the WHERE keyword) selecting rows to delete. Interpolated verbatim into the statement — the caller is responsible for sanitizing any untrusted input (this fragment is NOT escaped).
 #' @keywords mysql delete
 #' @export
 #' @examples
