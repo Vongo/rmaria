@@ -602,52 +602,59 @@ upsert_table <- function(table, table_name_in_base, keycols, host="localhost", p
 	# ON DUPLICATE KEY UPDATE
 	# `new_items_count` = `new_items_count` + 27
 
-	init()
-	if (nrow(table) == 0) {
-		if (!nolog) logging::logwarn("You tried to insert an empty table. Leaving.", logger=LOGGER.MAIN)
-		return()
-	}
-	if (!nolog) logging::loginfo("Upserting %s rows data into table %s.", nrow(table), table_name_in_base, logger=LOGGER.MAIN)
+  init()
+  table <- as.data.frame(table)                                  # data.table-safe
+  if (nrow(table) == 0) {
+    if (!nolog) logging::logwarn("You tried to insert an empty table. Leaving.", logger=LOGGER.MAIN)
+    return(invisible())
+  }
+  if (missing(keycols) || length(keycols) == 0L) {
+    stop("upsert_table: 'keycols' must name the key column(s) used to detect duplicates")
+  }
+  unknown_keys <- setdiff(keycols, colnames(table))
+  if (length(unknown_keys) > 0L) {
+    stop("upsert_table: keycols not found in table: ", paste(unknown_keys, collapse = ", "))
+  }
+  if (!nolog) logging::loginfo("Upserting %s rows data into table %s.", nrow(table), table_name_in_base, logger=LOGGER.MAIN)
 
-	has_quotes <- sapply(seq(ncol(table)), function(ic) !(is.numeric(table[,ic]) || is.logical(table[,ic])))
-	pb <- if(progress_bar) create_pb(nrow(table), bar_style="pc", time_style="cd") else NULL
-	for (i in seq(nrow(table))) {
-		prefix <- paste0("INSERT INTO ", table_name_in_base, "(", paste0(colnames(table), collapse=","), ") VALUES ")
-		values <- paste0("(",
-			paste0(
-				sapply(seq(ncol(table)), function(ic) {
-					if ((table[i, ic] %>% {is.na(.) || is.nan(.) || (is.numeric(.) && !is.finite(.))})) {
-						"\"Qù@ñÐĲ€T@IS©H€ZMŒZI//@\""
-					} else `if`(has_quotes[ic], paste0("'", gsub("'", '"', table[i, ic]), "'"), table[i, ic])
-				}), collapse=","
-			), ")"
-		)
-		suffix <- paste0(
-			" ON DUPLICATE KEY UPDATE ",
-			which(colnames(table) %ni% keycols) |> sapply(function(ic) {
-				if ((table[i, ic] %>% {is.na(.) || is.nan(.) || (is.numeric(.) && !is.finite(.))})) {
-					""
-				} else {
-					paste(
-						colnames(table)[ic],
-						`if`(has_quotes[ic], paste0("'", gsub("'", '\"', table[i, ic]), "'"), table[i, ic]),
-						sep="="
-					)
-				}
-			}) %>% .[purrr::map_lgl(., ~nchar(.x)>0)] |> paste(collapse = ",")
-		)
-		query <- paste0(prefix, gsub("\"Qù@ñÐĲ€T@IS©H€ZMŒZI//@\"", "NULL", values), suffix, ";")
-		tryCatch(
-			{exec_query(host, port, db, user, password, query)},
-			warn=function(w) {
-				if (!nolog) logging::logwarn("Warning while upserting query [%s]: [%s]", query, w, logger=LOGGER.MAIN)
-			},
-			error=function(e) {
-				if (!nolog) logging::logerror("Error while upserting query [%s]: [%s]", query, e, logger=LOGGER.MAIN)
-			}
-		)
-		if (progress_bar) update_pb(pb, i)
-	}
+  con <- .maria_connect(host, port, db, user, password)          # one connection
+  on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+
+  tbl_sql  <- DBI::dbQuoteIdentifier(con, table_name_in_base)
+  cols_sql <- paste(DBI::dbQuoteIdentifier(con, colnames(table)), collapse = ",")
+  non_key  <- which(colnames(table) %ni% keycols)
+  pb <- if (progress_bar) create_pb(nrow(table), bar_style="pc", time_style="cd") else NULL
+
+  for (i in seq_len(nrow(table))) {
+    # Per-cell SQL literals; non-finite numerics -> NA -> NULL.
+    lit <- vapply(seq_len(ncol(table)), function(ic) {
+      v <- table[i, ic]
+      if (is.numeric(v) && !is.finite(v)) v <- NA_real_
+      as.character(DBI::dbQuoteLiteral(con, v))
+    }, character(1))
+    values_sql <- paste0("(", paste(lit, collapse = ","), ")")
+    # ON DUPLICATE KEY UPDATE only for non-key columns whose value is not null-ish.
+    set_parts <- vapply(non_key, function(ic) {
+      # lit[ic] is "NULL" (unquoted) only for SQL NULLs; the string "NULL" quotes as "'NULL'".
+      if (identical(lit[ic], "NULL")) return("")
+      paste0(DBI::dbQuoteIdentifier(con, colnames(table)[ic]), "=", lit[ic])
+    }, character(1))
+    set_parts <- set_parts[nzchar(set_parts)]
+    # Empty when all non-key cols are null-ish OR there are no non-key cols (keys-only table); INSERT IGNORE is correct in both.
+    if (length(set_parts) == 0L) {
+      query <- paste0("INSERT IGNORE INTO ", tbl_sql, " (", cols_sql, ") VALUES ", values_sql, ";")
+    } else {
+      query <- paste0("INSERT INTO ", tbl_sql, " (", cols_sql, ") VALUES ", values_sql,
+                      " ON DUPLICATE KEY UPDATE ", paste(set_parts, collapse = ","), ";")
+    }
+    tryCatch(
+      RMariaDB::dbExecute(con, query),
+      error = function(e) if (!nolog) logging::logerror(
+        "Error while upserting row %d: %s", i, conditionMessage(e), logger=LOGGER.MAIN)
+    )
+    if (progress_bar) update_pb(pb, i)
+  }
+  invisible()
 }
 
 #' Simplified update
