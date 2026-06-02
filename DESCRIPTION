@@ -10,8 +10,7 @@ Description: Provides utilities to ease the pain of managing MariaDB connections
 License: WTFPL
 Encoding: UTF-8
 Depends: R (>= 4.1.0)
-Imports: logging, magrittr, rutils, RMariaDB, DBI, data.table, purrr, bit64
+Imports: logging, magrittr, RMariaDB, DBI, data.table, purrr, bit64
 Suggests: testthat (>= 3.0.0)
 Config/testthat/edition: 3
-Remotes: Vongo/rutils
 Config/roxygen2/version: 8.0.0

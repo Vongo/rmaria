@@ -75,7 +75,6 @@ selectq <- function(query, ...) {
 #' @param retries number of retry attempts for transient failures (default: 1)
 #' @param retry_delay delay in seconds between retry attempts (default: 1)
 #' @import magrittr
-#' @importFrom rutils "%ni%" create_pb update_pb
 #' @keywords mysql select
 #' @seealso insert_table
 #' @export
