@@ -472,7 +472,11 @@ updateq <- function(table, table_name_in_base, ...) {
 
 #' Update
 #'
-#' Simple method that updates rows in the designated table, matching existing rows on the key column(s).
+#' Updates rows in the designated table by loading the input data into a TEMPORARY table and
+#' executing a single \code{UPDATE ... JOIN ... SET col = COALESCE(src.col, tgt.col)}.
+#' All work runs inside one transaction. NULL values in the incoming data are preserved as
+#' "skip" (COALESCE keeps the existing DB value). NULL key values naturally do not match any
+#' existing row so those rows are silently ignored.
 #' @param host host
 #' @param port port
 #' @param db default database name
@@ -480,66 +484,74 @@ updateq <- function(table, table_name_in_base, ...) {
 #' @param password password
 #' @param table data.frame or data.table whose rows update matching rows in the database
 #' @param table_name_in_base table in \code{db} to update rows in
+#' @param keycols character vector naming the key column(s) used to identify rows (excluded from the SET/UPDATE clause)
+#' @param chunk_size how many rows to load per batch into the temp table (default 10000)
 #' @param progress_bar nice progress bar to use, it's recommended to disable it in log mode
 #' @param nolog avoid any writing to the console (when TRUE, errors are not logged either)
-#' @param keycols character vector naming the key column(s) used to identify rows (excluded from the SET/UPDATE clause)
+#' @return (invisibly) the number of rows changed.
 #' @keywords mysql update
 #' @details It's important to be aware that both input table and table in database should have the same schema (matching names, matching types).
+#' @details Input rows must be unique on \code{keycols}; duplicate keys within the batch resolve non-deterministically (this is a JOIN-based bulk update, not row-by-row).
 #' @seealso pull_data, selectq, insertq
 #' @export
 #' @examples
 #' \dontrun{update_table(my_data, "table_name", keycols=c("id"), host=HOST, db=DB, user=USER, password=PWD)}
 update_table <- function(table, table_name_in_base, keycols, host="localhost", port=3306, db, user, password,
-	progress_bar=interactive(), nolog=FALSE
+  chunk_size=NA, progress_bar=interactive(), nolog=FALSE
 ) {
-	# UPDATE `item` (`item_name`, items_in_stock)
-	# SET `new_items_count` = `new_items_count` + 27
-	# WHERE `id`=42;
-
-  table <- as.data.frame(table)                                  # data.table-safe
-  if (nrow(table) == 0) {
+  table <- as.data.frame(table)
+  if (nrow(table) == 0L) {
     if (!nolog) logging::logwarn("You tried to update with empty data. Leaving.", logger=LOGGER.MAIN)
-    return(invisible())
+    return(invisible(0L))
   }
-  if (missing(keycols) || length(keycols) == 0L) {
-    stop("update_table: 'keycols' must name the key column(s) used in the WHERE clause")
-  }
-  unknown_keys <- setdiff(keycols, colnames(table))
-  if (length(unknown_keys) > 0L) {
-    stop("update_table: keycols not found in table: ", paste(unknown_keys, collapse = ", "))
+  if (missing(keycols) || length(keycols) == 0L) stop("update_table: 'keycols' must name the key column(s)")
+  unknown <- setdiff(keycols, colnames(table))
+  if (length(unknown) > 0L) stop("update_table: keycols not found in table: ", paste(unknown, collapse = ", "))
+  cols <- colnames(table)
+  if (length(setdiff(cols, keycols)) == 0L) {
+    if (!nolog) logging::logwarn("update_table: no non-key columns to update. Leaving.", logger=LOGGER.MAIN)
+    return(invisible(0L))
   }
   if (!nolog) logging::loginfo("Updating %s rows data into table %s.", nrow(table), table_name_in_base, logger=LOGGER.MAIN)
-
-  con <- .maria_connect(host, port, db, user, password)          # one connection
+  table[] <- lapply(table, function(col) { if (is.factor(col)) col <- as.character(col); if (is.numeric(col)) col[!is.finite(col)] <- NA; col })
+  if (is.na(chunk_size)) chunk_size <- 10000L
+  chunk_size <- as.integer(max(1L, min(chunk_size, nrow(table))))
+  n_iter <- as.integer(ceiling(nrow(table) / chunk_size))
+  tmp <- "rmaria_update_tmp"
+  ins_sql <- build_insert_sql(tmp, cols, ignore = FALSE)
+  con <- .maria_connect(host, port, db, user, password)
   on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
-
-  tbl_sql  <- DBI::dbQuoteIdentifier(con, table_name_in_base)
-  set_cols <- which(colnames(table) %ni% keycols)
-  key_cols <- which(colnames(table) %in% keycols)
-  pb <- if (progress_bar) create_pb(nrow(table), bar_style="pc", time_style="cd") else NULL
-
-  for (i in seq_len(nrow(table))) {
-    clause <- function(ic) {
-      v <- table[i, ic]
-      if (is.numeric(v) && !is.finite(v)) v <- NA          # NA/NaN/Inf/-Inf -> skip
-      if (is.na(v)) return("")
-      paste0(DBI::dbQuoteIdentifier(con, colnames(table)[ic]), "=",
-             as.character(DBI::dbQuoteLiteral(con, v)))
+  pb <- if (progress_bar) create_pb(n_iter + 1L, bar_style="pc", time_style="cd") else NULL
+  affected <- tryCatch(
+    DBI::dbWithTransaction(con, {
+      RMariaDB::dbExecute(con, paste0("DROP TEMPORARY TABLE IF EXISTS ", quote_ident(tmp)))
+      RMariaDB::dbExecute(con, paste0("CREATE TEMPORARY TABLE ", quote_ident(tmp), " AS SELECT ",
+        paste(quote_ident(cols), collapse = ","), " FROM ", quote_ident(table_name_in_base), " WHERE 1=0"))
+      # The CTAS above inherits the target's NOT NULL constraints. Drop them so NA values
+      # (incl. NULL keys) can be loaded: NA non-key values are COALESCE-skipped, NULL keys
+      # simply don't match in the JOIN. Column TYPES are preserved exactly.
+      ci <- RMariaDB::dbGetQuery(con, paste0("SHOW COLUMNS FROM ", quote_ident(tmp)))
+      nn <- ci[ci$Null == "NO", , drop = FALSE]
+      if (nrow(nn) > 0L) {
+        mods <- paste(sprintf("MODIFY %s %s NULL", quote_ident(nn$Field), nn$Type), collapse = ", ")
+        RMariaDB::dbExecute(con, paste0("ALTER TABLE ", quote_ident(tmp), " ", mods))
+      }
+      RMariaDB::dbExecute(con, paste0("ALTER TABLE ", quote_ident(tmp), " ADD INDEX (",
+        paste(quote_ident(keycols), collapse = ","), ")"))
+      for (i in seq_len(n_iter)) {
+        rows <- ((i - 1L) * chunk_size + 1L):min(i * chunk_size, nrow(table))
+        RMariaDB::dbExecute(con, ins_sql, params = unname(as.list(table[rows, , drop = FALSE])))
+        if (progress_bar) update_pb(pb, i)
+      }
+      a <- RMariaDB::dbExecute(con, build_update_join_sql(table_name_in_base, tmp, cols, keycols))
+      RMariaDB::dbExecute(con, paste0("DROP TEMPORARY TABLE ", quote_ident(tmp)))
+      if (progress_bar) update_pb(pb, n_iter + 1L)
+      a
+    }),
+    error = function(e) {
+      if (!nolog) logging::logerror("Error updating %s: %s", table_name_in_base, conditionMessage(e), logger = LOGGER.MAIN)
+      stop(e)
     }
-    set_parts   <- vapply(set_cols, clause, character(1)); set_parts   <- set_parts[nzchar(set_parts)]
-    where_parts <- vapply(key_cols, clause, character(1)); where_parts <- where_parts[nzchar(where_parts)]
-    if (length(set_parts) == 0L || length(where_parts) < length(key_cols)) {
-      if (!nolog) logging::logfinest("Skipping incomplete row with index [%s]", i, logger=LOGGER.MAIN)
-      next
-    }
-    query <- paste0("UPDATE ", tbl_sql, " SET ", paste(set_parts, collapse = ","),
-                    " WHERE ", paste(where_parts, collapse = " AND "), ";")
-    tryCatch(
-      RMariaDB::dbExecute(con, query),
-      error = function(e) if (!nolog) logging::logerror(
-        "Error while updating row %d: %s", i, conditionMessage(e), logger=LOGGER.MAIN)
-    )
-    if (progress_bar) update_pb(pb, i)
-  }
-  invisible()
+  )
+  invisible(affected)
 }

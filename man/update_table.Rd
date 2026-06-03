@@ -13,6 +13,7 @@ update_table(
   db,
   user,
   password,
+  chunk_size = NA,
   progress_bar = interactive(),
   nolog = FALSE
 )
@@ -34,15 +35,26 @@ update_table(
 
 \item{password}{password}
 
+\item{chunk_size}{how many rows to load per batch into the temp table (default 10000)}
+
 \item{progress_bar}{nice progress bar to use, it's recommended to disable it in log mode}
 
 \item{nolog}{avoid any writing to the console (when TRUE, errors are not logged either)}
 }
+\value{
+(invisibly) the number of rows changed.
+}
 \description{
-Simple method that updates rows in the designated table, matching existing rows on the key column(s).
+Updates rows in the designated table by loading the input data into a TEMPORARY table and
+executing a single \code{UPDATE ... JOIN ... SET col = COALESCE(src.col, tgt.col)}.
+All work runs inside one transaction. NULL values in the incoming data are preserved as
+"skip" (COALESCE keeps the existing DB value). NULL key values naturally do not match any
+existing row so those rows are silently ignored.
 }
 \details{
 It's important to be aware that both input table and table in database should have the same schema (matching names, matching types).
+
+Input rows must be unique on \code{keycols}; duplicate keys within the batch resolve non-deterministically (this is a JOIN-based bulk update, not row-by-row).
 }
 \examples{
 \dontrun{update_table(my_data, "table_name", keycols=c("id"), host=HOST, db=DB, user=USER, password=PWD)}
