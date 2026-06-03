@@ -20,7 +20,7 @@ update_table(
 \arguments{
 \item{table}{data.frame or data.table whose rows update matching rows in the database}
 
-\item{table_name_in_base}{table in {db} to update rows in}
+\item{table_name_in_base}{table in \code{db} to update rows in}
 
 \item{keycols}{character vector naming the key column(s) used to identify rows (excluded from the SET/UPDATE clause)}
 

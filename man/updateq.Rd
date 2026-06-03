@@ -9,7 +9,7 @@ updateq(table, table_name_in_base, ...)
 \arguments{
 \item{table}{data.frame or data.table to update}
 
-\item{table_name_in_base}{table in {db} to update data into}
+\item{table_name_in_base}{table in \code{db} to update data into}
 
 \item{...}{any other parameter that applies to update_table}
 }

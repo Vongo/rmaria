@@ -14,7 +14,7 @@ truncate_table(
 )
 }
 \arguments{
-\item{table_name_in_base}{table in {db} to insert data into}
+\item{table_name_in_base}{table in \code{db} to insert data into}
 
 \item{host}{host}
 

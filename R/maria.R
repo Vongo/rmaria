@@ -178,7 +178,7 @@ exec_query <- function(host="localhost", port=3306, db, user, password, query) {
 #'
 #' Simple method that inserts the input data.frame or data.table into the designated table in the current DB context.
 #' @param table data.frame or data.table to insert
-#' @param table_name_in_base table in {db} to insert data into
+#' @param table_name_in_base table in \code{db} to insert data into
 #' @param preface_queries character vector of queries you want to apply before, typically setting session variables.
 #' @param split_threshold integer, number of rows to split the data into smaller groups. Default is 1e5.
 #' @param use_file logical, if TRUE, uses `load_data_local_infile` flag. Default is FALSE. Careful if you use it, as it does a count(*) on table before and after to check what was integrated.
@@ -220,7 +220,7 @@ insert_table_local <- function(table, table_name_in_base, preface_queries=charac
 #' Truncate table
 #'
 #' Empties table from all observations, but doesn't delete it.
-#' @param table_name_in_base table in {db} to insert data into
+#' @param table_name_in_base table in \code{db} to insert data into
 #' @param host host
 #' @param port port
 #' @param db default database name
@@ -238,15 +238,15 @@ truncate_table <- function(table_name_in_base, host="localhost", port=3306, db, 
 }
 
 insert_source_full_file <- function(src, host="localhost", port=3306, db, user, password) {
-	con <- dbConnect(MariaDB(), user=user, password=password, dbname=db, host=host, port=port)
+	con <- RMariaDB::dbConnect(RMariaDB::MariaDB(), user=user, password=password, dbname=db, host=host, port=port)
 	# Retrieving the path where MYSQL can read from (if any)
 	# Only problem is that you should have the right to write there
 	path <- paste0(pull_data(host, port, db, user, password, "SHOW VARIABLES LIKE 'secure_file_priv';")["Value"], "tmp.csv")
 	print(path)
-	dbExecute(con, 'set character set "utf8"')
-	write.table(src, path, row.names=FALSE, col.names=FALSE, sep='\t')
+	RMariaDB::dbExecute(con, 'set character set "utf8"')
+	utils::write.table(src, path, row.names=FALSE, col.names=FALSE, sep='\t')
 	query = paste0("LOAD DATA INFILE '", path, "' INTO TABLE uplift_source")
-	dbExecute(con, query)
+	RMariaDB::dbExecute(con, query)
 	file.remove(path)
 	RMariaDB::dbDisconnect(con)
 }
@@ -255,7 +255,7 @@ insert_source_full_file <- function(src, host="localhost", port=3306, db, user, 
 #'
 #' Simple method that inserts the input data.frame or data.table into the designated table in the current DB context.
 #' @param table data.frame or data.table to insert
-#' @param table_name_in_base table in {db} to insert data into
+#' @param table_name_in_base table in \code{db} to insert data into
 #' @param ... any other parameter that applies to insert_table
 #' @keywords mysql insert
 #' @details It's important to be aware that both input table and table in database should have the same schema (matching names, matching types).
@@ -311,16 +311,6 @@ deleteq <- function(table_name_in_base, where, ...) {
 }
 
 
-# Escape single quotes
-esq <- function(str) {
-	gsub("'", "\\\\'", str)
-}
-
-# Escape double quotes
-edq <- function(str) {
-	gsub("\"", "\\\\'", str)
-}
-
 #' Insert
 #'
 #' Simple method that inserts the input data.frame or data.table into the designated table.
@@ -330,7 +320,7 @@ edq <- function(str) {
 #' @param user user
 #' @param password password
 #' @param table data.frame or data.table to insert
-#' @param table_name_in_base table in {db} to insert data into
+#' @param table_name_in_base table in \code{db} to insert data into
 #' @param chunk_size how many elements should be inserted at a time
 #' @param progress_bar nice progress bar to use, it's recommended to disable it in log mode
 #' @param ignore should we ignore observations that produce errors?
@@ -387,7 +377,7 @@ insert_table <- function(table, table_name_in_base, host="localhost", port=3306,
 #'
 #' Simple method that upserts the input data.frame or data.table into the designated table in the current DB context.
 #' @param table data.frame or data.table to upsert
-#' @param table_name_in_base table in {db} to upsert data into
+#' @param table_name_in_base table in \code{db} to upsert data into
 #' @param ... any other parameter that applies to upsert_table
 #' @keywords mysql upsert insert update
 #' @details It's important to be aware that both input table and table in database should have the same schema (matching names, matching types).
@@ -411,7 +401,7 @@ upsertq <- function(table, table_name_in_base, ...) {
 #' @param user user
 #' @param password password
 #' @param table data.frame or data.table to insert
-#' @param table_name_in_base table in {db} to upsert data into
+#' @param table_name_in_base table in \code{db} to upsert data into
 #' @param progress_bar nice progress bar to use, it's recommended to disable it in log mode
 #' @param nolog avoid any writing to the console (when TRUE, errors are not logged either)
 #' @param keycols character vector naming the key column(s) used to identify rows (excluded from the SET/UPDATE clause)
@@ -485,7 +475,7 @@ upsert_table <- function(table, table_name_in_base, keycols, host="localhost", p
 #'
 #' Simple method that updates the input data.frame or data.table into the designated table in the current DB context.
 #' @param table data.frame or data.table to update
-#' @param table_name_in_base table in {db} to update data into
+#' @param table_name_in_base table in \code{db} to update data into
 #' @param ... any other parameter that applies to update_table
 #' @keywords mysql update insert
 #' @details It's important to be aware that both input table and table in database should have the same schema (matching names, matching types).
@@ -509,7 +499,7 @@ updateq <- function(table, table_name_in_base, ...) {
 #' @param user user
 #' @param password password
 #' @param table data.frame or data.table whose rows update matching rows in the database
-#' @param table_name_in_base table in {db} to update rows in
+#' @param table_name_in_base table in \code{db} to update rows in
 #' @param progress_bar nice progress bar to use, it's recommended to disable it in log mode
 #' @param nolog avoid any writing to the console (when TRUE, errors are not logged either)
 #' @param keycols character vector naming the key column(s) used to identify rows (excluded from the SET/UPDATE clause)

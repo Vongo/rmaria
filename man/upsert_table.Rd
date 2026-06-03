@@ -20,7 +20,7 @@ upsert_table(
 \arguments{
 \item{table}{data.frame or data.table to insert}
 
-\item{table_name_in_base}{table in {db} to upsert data into}
+\item{table_name_in_base}{table in \code{db} to upsert data into}
 
 \item{keycols}{character vector naming the key column(s) used to identify rows (excluded from the SET/UPDATE clause)}
 

@@ -9,7 +9,7 @@ upsertq(table, table_name_in_base, ...)
 \arguments{
 \item{table}{data.frame or data.table to upsert}
 
-\item{table_name_in_base}{table in {db} to upsert data into}
+\item{table_name_in_base}{table in \code{db} to upsert data into}
 
 \item{...}{any other parameter that applies to upsert_table}
 }

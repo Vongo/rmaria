@@ -15,7 +15,7 @@ insert_table_local(
 \arguments{
 \item{table}{data.frame or data.table to insert}
 
-\item{table_name_in_base}{table in {db} to insert data into}
+\item{table_name_in_base}{table in \code{db} to insert data into}
 
 \item{preface_queries}{character vector of queries you want to apply before, typically setting session variables.}
 
