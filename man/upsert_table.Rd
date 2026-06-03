@@ -13,6 +13,7 @@ upsert_table(
   db,
   user,
   password,
+  chunk_size = NA,
   progress_bar = interactive(),
   nolog = FALSE
 )
@@ -34,12 +35,19 @@ upsert_table(
 
 \item{password}{password}
 
+\item{chunk_size}{how many rows to send per batched statement (default 10000)}
+
 \item{progress_bar}{nice progress bar to use, it's recommended to disable it in log mode}
 
 \item{nolog}{avoid any writing to the console (when TRUE, errors are not logged either)}
 }
+\value{
+(invisibly) MariaDB's affected-row count (inserts count 1, updates count 2 per row).
+}
 \description{
 Simple method that inserts the input data.frame or data.table into the designated table, or updates it if the key already exists.
+Uses parameterized batched INSERT ... ON DUPLICATE KEY UPDATE with COALESCE so that NULL values in the
+incoming data do not overwrite existing non-NULL values in the database.
 }
 \details{
 It's important to be aware that both input table and table in database should have the same schema (matching names, matching types).

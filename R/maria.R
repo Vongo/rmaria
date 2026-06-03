@@ -393,6 +393,8 @@ upsertq <- function(table, table_name_in_base, ...) {
 #' Upsert
 #'
 #' Simple method that inserts the input data.frame or data.table into the designated table, or updates it if the key already exists.
+#' Uses parameterized batched INSERT ... ON DUPLICATE KEY UPDATE with COALESCE so that NULL values in the
+#' incoming data do not overwrite existing non-NULL values in the database.
 #' @param host host
 #' @param port port
 #' @param db default database name
@@ -400,9 +402,11 @@ upsertq <- function(table, table_name_in_base, ...) {
 #' @param password password
 #' @param table data.frame or data.table to insert
 #' @param table_name_in_base table in \code{db} to upsert data into
+#' @param keycols character vector naming the key column(s) used to identify rows (excluded from the SET/UPDATE clause)
+#' @param chunk_size how many rows to send per batched statement (default 10000)
 #' @param progress_bar nice progress bar to use, it's recommended to disable it in log mode
 #' @param nolog avoid any writing to the console (when TRUE, errors are not logged either)
-#' @param keycols character vector naming the key column(s) used to identify rows (excluded from the SET/UPDATE clause)
+#' @return (invisibly) MariaDB's affected-row count (inserts count 1, updates count 2 per row).
 #' @keywords mysql insert
 #' @details It's important to be aware that both input table and table in database should have the same schema (matching names, matching types).
 #' @seealso pull_data, selectq, insertq
@@ -410,63 +414,41 @@ upsertq <- function(table, table_name_in_base, ...) {
 #' @examples
 #' \dontrun{upsert_table(my_data, "table_name", keycols=c("id"), host=HOST, db=DB, user=USER, password=PWD)}
 upsert_table <- function(table, table_name_in_base, keycols, host="localhost", port=3306, db, user, password,
-	progress_bar=interactive(), nolog=FALSE
+	chunk_size=NA, progress_bar=interactive(), nolog=FALSE
 ) {
-  table <- as.data.frame(table)                                  # data.table-safe
-  if (nrow(table) == 0) {
+  table <- as.data.frame(table)
+  if (nrow(table) == 0L) {
     if (!nolog) logging::logwarn("You tried to insert an empty table. Leaving.", logger=LOGGER.MAIN)
-    return(invisible())
+    return(invisible(0L))
   }
-  if (missing(keycols) || length(keycols) == 0L) {
-    stop("upsert_table: 'keycols' must name the key column(s) used to detect duplicates")
-  }
-  unknown_keys <- setdiff(keycols, colnames(table))
-  if (length(unknown_keys) > 0L) {
-    stop("upsert_table: keycols not found in table: ", paste(unknown_keys, collapse = ", "))
-  }
+  if (missing(keycols) || length(keycols) == 0L) stop("upsert_table: 'keycols' must name the key column(s)")
+  unknown <- setdiff(keycols, colnames(table))
+  if (length(unknown) > 0L) stop("upsert_table: keycols not found in table: ", paste(unknown, collapse = ", "))
   if (!nolog) logging::loginfo("Upserting %s rows data into table %s.", nrow(table), table_name_in_base, logger=LOGGER.MAIN)
-
-  con <- .maria_connect(host, port, db, user, password)          # one connection
+  table[] <- lapply(table, function(col) { if (is.factor(col)) col <- as.character(col); if (is.numeric(col)) col[!is.finite(col)] <- NA; col })
+  cols <- colnames(table)
+  sql  <- build_upsert_sql(table_name_in_base, cols, keycols)
+  if (is.na(chunk_size)) chunk_size <- 10000L
+  chunk_size <- as.integer(max(1L, min(chunk_size, nrow(table))))
+  n_iter <- as.integer(ceiling(nrow(table) / chunk_size))
+  con <- .maria_connect(host, port, db, user, password)
   on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
-
-  tbl_sql  <- DBI::dbQuoteIdentifier(con, table_name_in_base)
-  cols_sql <- paste(DBI::dbQuoteIdentifier(con, colnames(table)), collapse = ",")
-  non_key  <- which(colnames(table) %ni% keycols)
-  pb <- if (progress_bar) create_pb(nrow(table), bar_style="pc", time_style="cd") else NULL
-
-  for (i in seq_len(nrow(table))) {
-    # Per-cell SQL literals; non-finite numerics -> NA -> NULL.
-    lit <- vapply(seq_len(ncol(table)), function(ic) {
-      v <- table[i, ic]
-      if (is.numeric(v) && !is.finite(v)) v <- NA_real_
-      as.character(DBI::dbQuoteLiteral(con, v))
-    }, character(1))
-    values_sql <- paste0("(", paste(lit, collapse = ","), ")")
-    # ON DUPLICATE KEY UPDATE only for non-key columns whose value is not null-ish.
-    set_parts <- vapply(non_key, function(ic) {
-      # lit[ic] is "NULL" (unquoted) only for SQL NULLs; the string "NULL" quotes as "'NULL'".
-      if (identical(lit[ic], "NULL")) return("")
-      paste0(DBI::dbQuoteIdentifier(con, colnames(table)[ic]), "=", lit[ic])
-    }, character(1))
-    set_parts <- set_parts[nzchar(set_parts)]
-    # Empty when all non-key cols are null-ish OR there are no non-key cols (keys-only table); INSERT IGNORE is correct in both.
-    if (length(set_parts) == 0L) {
-      if (!nolog) logging::logwarn(
-        "upsert_table: row %d has no updatable (non-key, non-NULL) columns; using INSERT IGNORE (existing row left unchanged)",
-        i, logger = LOGGER.MAIN)
-      query <- paste0("INSERT IGNORE INTO ", tbl_sql, " (", cols_sql, ") VALUES ", values_sql, ";")
-    } else {
-      query <- paste0("INSERT INTO ", tbl_sql, " (", cols_sql, ") VALUES ", values_sql,
-                      " ON DUPLICATE KEY UPDATE ", paste(set_parts, collapse = ","), ";")
+  pb <- if (progress_bar) create_pb(n_iter, bar_style="pc", time_style="cd") else NULL
+  affected <- 0L
+  tryCatch(
+    DBI::dbWithTransaction(con, {
+      for (i in seq_len(n_iter)) {
+        rows <- ((i - 1L) * chunk_size + 1L):min(i * chunk_size, nrow(table))
+        affected <- affected + RMariaDB::dbExecute(con, sql, params = unname(as.list(table[rows, , drop = FALSE])))
+        if (progress_bar) update_pb(pb, i)
+      }
+    }),
+    error = function(e) {
+      if (!nolog) logging::logerror("Error upserting into %s: %s", table_name_in_base, conditionMessage(e), logger = LOGGER.MAIN)
+      stop(e)
     }
-    tryCatch(
-      RMariaDB::dbExecute(con, query),
-      error = function(e) if (!nolog) logging::logerror(
-        "Error while upserting row %d: %s", i, conditionMessage(e), logger=LOGGER.MAIN)
-    )
-    if (progress_bar) update_pb(pb, i)
-  }
-  invisible()
+  )
+  invisible(affected)
 }
 
 #' Simplified update
