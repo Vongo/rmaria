@@ -36,35 +36,8 @@ init()
 #' \dontrun{
 #' selectq("select * from table limit 10;")}
 selectq <- function(query, ...) {
-	target_e <- environment()
-	source_environments <- list(
-		environment(),
-		parent.frame(),
-		parent.env(environment()),
-		parent.env(parent.env(environment())),
-		parent.env(parent.frame(n=1)),
-		parent.env(parent.frame(n=2)), # purrr::map
-		parent.env(parent.frame(n=3)),
-		parent.env(parent.frame(n=4)), # parallel::mclapply
-		parent.env(parent.frame(n=5))
-	)
-	i_env <- 1
-	source_e <- source_environments[[i_env]]
-	while (i_env<length(source_environments) && !all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
-		i_env %<>% add(1)
-		source_e <- source_environments[[i_env]]
-	}
-	if (all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
-		assign("DB", get("DB", envir=source_e), envir=target_e)
-		assign("HOST", get("HOST", envir=source_e), envir=target_e)
-		assign("PWD", get("PWD", envir=source_e), envir=target_e)
-		assign("USER", get("USER", envir=source_e), envir=target_e)
-	} else {
-		init()
-		logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
-		return(FALSE)
-	}
-	pull_data(host=HOST, db=DB, user=USER, password=PWD, query=query, ...)
+  creds <- resolve_credentials()
+  pull_data(host = creds$host, port = creds$port, db = creds$db, user = creds$user, password = creds$pwd, query = query, ...)
 }
 
 
@@ -182,35 +155,8 @@ pull_data <- function(host="localhost", port=3306, db, user, password, query, ve
 #' @examples
 #' \dontrun{execq("TRUNCATE TABLE foo;")}
 execq <- function(query, ...) {
-	target_e <- environment()
-	source_environments <- list(
-		environment(),
-		parent.frame(),
-		parent.env(environment()),
-		parent.env(parent.env(environment())),
-		parent.env(parent.frame(n=1)),
-		parent.env(parent.frame(n=2)), # purrr::map
-		parent.env(parent.frame(n=3)),
-		parent.env(parent.frame(n=4)), # parallel::mclapply
-		parent.env(parent.frame(n=5))
-	)
-	i_env <- 1
-	source_e <- source_environments[[i_env]]
-	while (i_env<length(source_environments) && !all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
-		i_env %<>% add(1)
-		source_e <- source_environments[[i_env]]
-	}
-	if (all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
-		assign("DB", get("DB", envir=source_e), envir=target_e)
-		assign("HOST", get("HOST", envir=source_e), envir=target_e)
-		assign("PWD", get("PWD", envir=source_e), envir=target_e)
-		assign("USER", get("USER", envir=source_e), envir=target_e)
-	} else {
-		init()
-		logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
-		return(FALSE)
-	}
-	exec_query(host=HOST, db=DB, user=USER, password=PWD, query=query, ...)
+  creds <- resolve_credentials()
+  exec_query(host = creds$host, port = creds$port, db = creds$db, user = creds$user, password = creds$pwd, query = query, ...)
 }
 
 
@@ -252,63 +198,29 @@ exec_query <- function(host="localhost", port=3306, db, user, password, query) {
 #'   data <- insert_table_local(iris, "iris", preface_queries="SET session rocksdb_bulk_load=1")
 #' }
 insert_table_local <- function(table, table_name_in_base, preface_queries=character(0), split_threshold=1e5, use_file=FALSE) {
-	target_e <- environment()
-	source_environments <- list(
-		environment(),
-		parent.frame(),
-		parent.env(environment()),
-		parent.env(parent.env(environment())),
-		parent.env(parent.frame(n=1)),
-		parent.env(parent.frame(n=2)), # purrr::map
-		parent.env(parent.frame(n=3)),
-		parent.env(parent.frame(n=4)), # parallel::mclapply
-		parent.env(parent.frame(n=5))
-	)
-	i_env <- 1
-	source_e <- source_environments[[i_env]]
-	while (i_env<length(source_environments) && !all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
-		i_env %<>% add(1)
-		source_e <- source_environments[[i_env]]
-	}
-	if (all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
-		assign("DB", get("DB", envir=source_e), envir=target_e)
-		assign("HOST", get("HOST", envir=source_e), envir=target_e)
-		assign("PWD", get("PWD", envir=source_e), envir=target_e)
-		assign("USER", get("USER", envir=source_e), envir=target_e)
-		PORT <- if (exists("PORT", envir=source_e)) suppressWarnings(as.integer(get("PORT", envir=source_e))) else 3306L
-		if (is.na(PORT)) {
-			logging::logerror("insert_table_local: PORT is not a valid integer; defaulting to 3306.", logger=LOGGER.MAIN)
-			PORT <- 3306L
-		}
-	} else {
-		init()
-		logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
-		return(FALSE)
-	}
-	table <- as.data.frame(table)
-	con <- NULL
-	tryCatch({
-		con <- .maria_connect(HOST, PORT, DB, USER, PWD, local_infile = use_file)
-		if (length(preface_queries)>0) {
-			for (preface_query in preface_queries) {
-				RMariaDB::dbExecute(con, preface_query)
-			}
-		}
-		if (nrow(table)>=split_threshold) {
-			start <- 1
-			while (start <= nrow(table)) {
-				end <- min(nrow(table), start+split_threshold-1)
-				RMariaDB::dbWriteTable(con, table_name_in_base, table[seq(start, end), , drop=FALSE], append=TRUE)
-				start <- end + 1
-			}
-		} else {
-			RMariaDB::dbWriteTable(con, table_name_in_base, table, append=TRUE)
-		}
-	}, error=function(e) {
-		logging::logerror("Error while inserting data into table %s: %s", table_name_in_base, conditionMessage(e), logger=LOGGER.MAIN)
-	}, finally={
-		if (!is.null(con)) RMariaDB::dbDisconnect(con)
-	})
+  creds <- resolve_credentials()
+  table <- as.data.frame(table)
+  con <- NULL
+  tryCatch({
+    con <- .maria_connect(creds$host, creds$port, creds$db, creds$user, creds$pwd, local_infile = use_file)
+    if (length(preface_queries) > 0) {
+      for (pq in preface_queries) RMariaDB::dbExecute(con, pq)
+    }
+    if (nrow(table) >= split_threshold) {
+      start <- 1
+      while (start <= nrow(table)) {
+        end <- min(nrow(table), start + split_threshold - 1)
+        RMariaDB::dbWriteTable(con, table_name_in_base, table[seq(start, end), , drop = FALSE], append = TRUE)
+        start <- end + 1
+      }
+    } else {
+      RMariaDB::dbWriteTable(con, table_name_in_base, table, append = TRUE)
+    }
+  }, error = function(e) {
+    logging::logerror("Error while inserting data into table %s: %s", table_name_in_base, conditionMessage(e), logger = LOGGER.MAIN)
+  }, finally = {
+    if (!is.null(con)) RMariaDB::dbDisconnect(con)
+  })
 }
 
 #' Truncate table
@@ -359,35 +271,9 @@ insert_source_full_file <- function(src, host="localhost", port=3306, db, user, 
 #' @examples
 #' \dontrun{data <- insertq(host=HOST, db=DB, user=user, password=pwd, query="select * from table;")}
 insertq <- function(table, table_name_in_base, ...) {
-	target_e <- environment()
-	source_environments <- list(
-		environment(),
-		parent.frame(),
-		parent.env(environment()),
-		parent.env(parent.env(environment())),
-		parent.env(parent.frame(n=1)),
-		parent.env(parent.frame(n=2)), # purrr::map
-		parent.env(parent.frame(n=3)),
-		parent.env(parent.frame(n=4)), # parallel::mclapply
-		parent.env(parent.frame(n=5))
-	)
-	i_env <- 1
-	source_e <- source_environments[[i_env]]
-	while (i_env<length(source_environments) && !all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
-		i_env %<>% add(1)
-		source_e <- source_environments[[i_env]]
-	}
-	if (all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
-		assign("DB", get("DB", envir=source_e), envir=target_e)
-		assign("HOST", get("HOST", envir=source_e), envir=target_e)
-		assign("PWD", get("PWD", envir=source_e), envir=target_e)
-		assign("USER", get("USER", envir=source_e), envir=target_e)
-	} else {
-		init()
-		logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
-		return(FALSE)
-	}
-	insert_table(table=table, table_name_in_base=table_name_in_base, host=HOST, db=DB, user=USER, password=PWD, ...)
+  creds <- resolve_credentials()
+  insert_table(table = table, table_name_in_base = table_name_in_base,
+               host = creds$host, port = creds$port, db = creds$db, user = creds$user, password = creds$pwd, ...)
 }
 
 #' Delete query
@@ -426,35 +312,9 @@ delete_from_table <- function(table_name_in_base, where, host="localhost", port=
 #' @examples
 #' \dontrun{deleteq(table_name_in_base="foo", where="id < 10")}
 deleteq <- function(table_name_in_base, where, ...) {
-	target_e <- environment()
-	source_environments <- list(
-		environment(),
-		parent.frame(),
-		parent.env(environment()),
-		parent.env(parent.env(environment())),
-		parent.env(parent.frame(n=1)),
-		parent.env(parent.frame(n=2)), # purrr::map
-		parent.env(parent.frame(n=3)),
-		parent.env(parent.frame(n=4)), # parallel::mclapply
-		parent.env(parent.frame(n=5))
-	)
-	i_env <- 1
-	source_e <- source_environments[[i_env]]
-	while (i_env<length(source_environments) && !all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
-		i_env %<>% add(1)
-		source_e <- source_environments[[i_env]]
-	}
-	if (all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
-		assign("DB", get("DB", envir=source_e), envir=target_e)
-		assign("HOST", get("HOST", envir=source_e), envir=target_e)
-		assign("PWD", get("PWD", envir=source_e), envir=target_e)
-		assign("USER", get("USER", envir=source_e), envir=target_e)
-	} else {
-		init()
-		logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
-		return(FALSE)
-	}
-	delete_from_table(table_name_in_base, where, host=HOST, db=DB, user=USER, password=PWD, ...)
+  creds <- resolve_credentials()
+  delete_from_table(table_name_in_base, where,
+                    host = creds$host, port = creds$port, db = creds$db, user = creds$user, password = creds$pwd, ...)
 }
 
 
@@ -544,35 +404,9 @@ insert_table <- function(table, table_name_in_base, host="localhost", port=3306,
 #' @examples
 #' \dontrun{upsertq(iris, "iris_database_name")}
 upsertq <- function(table, table_name_in_base, ...) {
-	target_e <- environment()
-	source_environments <- list(
-		environment(),
-		parent.frame(),
-		parent.env(environment()),
-		parent.env(parent.env(environment())),
-		parent.env(parent.frame(n=1)),
-		parent.env(parent.frame(n=2)), # purrr::map
-		parent.env(parent.frame(n=3)),
-		parent.env(parent.frame(n=4)), # parallel::mclapply
-		parent.env(parent.frame(n=5))
-	)
-	i_env <- 1
-	source_e <- source_environments[[i_env]]
-	while (i_env<length(source_environments) && !all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
-		i_env %<>% add(1)
-		source_e <- source_environments[[i_env]]
-	}
-	if (all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
-		assign("DB", get("DB", envir=source_e), envir=target_e)
-		assign("HOST", get("HOST", envir=source_e), envir=target_e)
-		assign("PWD", get("PWD", envir=source_e), envir=target_e)
-		assign("USER", get("USER", envir=source_e), envir=target_e)
-	} else {
-		init()
-		logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
-		return(FALSE)
-	}
-	upsert_table(table=table, table_name_in_base=table_name_in_base, host=HOST, db=DB, user=USER, password=PWD, ...)
+  creds <- resolve_credentials()
+  upsert_table(table = table, table_name_in_base = table_name_in_base,
+               host = creds$host, port = creds$port, db = creds$db, user = creds$user, password = creds$pwd, ...)
 }
 
 
@@ -669,35 +503,9 @@ upsert_table <- function(table, table_name_in_base, keycols, host="localhost", p
 #' @examples
 #' \dontrun{updateq(iris, "iris_database_name")}
 updateq <- function(table, table_name_in_base, ...) {
-	target_e <- environment()
-	source_environments <- list(
-		environment(),
-		parent.frame(),
-		parent.env(environment()),
-		parent.env(parent.env(environment())),
-		parent.env(parent.frame(n=1)),
-		parent.env(parent.frame(n=2)), # purrr::map
-		parent.env(parent.frame(n=3)),
-		parent.env(parent.frame(n=4)), # parallel::mclapply
-		parent.env(parent.frame(n=5))
-	)
-	i_env <- 1
-	source_e <- source_environments[[i_env]]
-	while (i_env<length(source_environments) && !all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
-		i_env %<>% add(1)
-		source_e <- source_environments[[i_env]]
-	}
-	if (all(unlist(lapply(c("DB", "HOST", "PWD", "USER"), exists, envir=source_e)))) {
-		assign("DB", get("DB", envir=source_e), envir=target_e)
-		assign("HOST", get("HOST", envir=source_e), envir=target_e)
-		assign("PWD", get("PWD", envir=source_e), envir=target_e)
-		assign("USER", get("USER", envir=source_e), envir=target_e)
-	} else {
-		init()
-		logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
-		return(FALSE)
-	}
-	update_table(table=table, table_name_in_base=table_name_in_base, host=HOST, db=DB, user=USER, password=PWD, ...)
+  creds <- resolve_credentials()
+  update_table(table = table, table_name_in_base = table_name_in_base,
+               host = creds$host, port = creds$port, db = creds$db, user = creds$user, password = creds$pwd, ...)
 }
 
 

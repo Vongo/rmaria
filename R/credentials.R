@@ -2,7 +2,8 @@
 # parent-frame/parent-env scan used by the *q wrappers, but as one helper.
 # Because it runs one frame deeper than the wrapper, dynamic-frame offsets are +1.
 # NOTE: inherits=TRUE means creds set in globalenv (e.g. via load_env) are also found -- this matches the original wrappers' behavior and is intentional.
-# Returns list(host, db, user, pwd) or stop()s if not all four are found.
+# Returns list(host, db, user, pwd, port) or stop()s if not all four of
+# DB/HOST/PWD/USER are found. PORT is optional and defaults to 3306L.
 resolve_credentials <- function() {
   needed <- c("DB", "HOST", "PWD", "USER")
   # safe() guards parent.env() on emptyenv/baseenv; parent.frame(n) beyond the stack does NOT error (returns globalenv).
@@ -21,9 +22,11 @@ resolve_credentials <- function() {
   )
   for (e in envs) {
     if (all(vapply(needed, exists, logical(1), envir = e, inherits = TRUE))) {
+      port <- if (exists("PORT", envir = e, inherits = TRUE)) suppressWarnings(as.integer(get("PORT", envir = e))) else 3306L
+      if (length(port) != 1L || is.na(port)) port <- 3306L
       return(list(
         host = get("HOST", envir = e), db = get("DB", envir = e),
-        user = get("USER", envir = e), pwd = get("PWD", envir = e)
+        user = get("USER", envir = e), pwd = get("PWD", envir = e), port = port
       ))
     }
   }
