@@ -10,11 +10,10 @@ test_that("DESCRIPTION declares purrr and bit64", {
   expect_match(imports, "bit64", fixed = TRUE)
 })
 
-test_that("no bare (unqualified) map_lgl remains in R/maria.R", {
-  src_path <- "../../R/maria.R"
-  testthat::skip_if_not(file.exists(src_path),
-                        "source not present (R CMD check) — skipping source lint")
-  src  <- readLines(src_path, warn = FALSE)
+test_that("no bare (unqualified) map_lgl remains in R/", {
+  src_files <- list.files("../../R", pattern = "\\.R$", full.names = TRUE)
+  testthat::skip_if(length(src_files) == 0L, "source not present (R CMD check) -- skipping source lint")
+  src  <- unlist(lapply(src_files, readLines, warn = FALSE))
   bare <- grepl("(^|[^:[:alnum:]_.])map_lgl\\s*\\(", src) & !grepl("purrr::map_lgl", src)
   expect_equal(which(bare), integer(0))
 })
