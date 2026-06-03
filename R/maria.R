@@ -1,8 +1,4 @@
-init <- function() {
-	LOGGER.MAIN <<- "com.vongo.rmaria"
-	TRUE
-}
-init()
+LOGGER.MAIN <- "com.vongo.rmaria"
 
 # Internal: open one MariaDB connection with utf8mb4. Caller owns disconnect.
 .maria_connect <- function(host = "localhost", port = 3306, db, user, password,
@@ -61,8 +57,6 @@ selectq <- function(query, ...) {
 #' @examples
 #' \dontrun{data <- pull_data(host=HOST, db=DB, user=user, password=pwd, query="select * from table;")}
 pull_data <- function(host="localhost", port=3306, db, user, password, query, verbose=TRUE, keep_int64=FALSE, retries=1, retry_delay=1) {
-	init()
-
 	# Input validation
 	if (missing(query) || is.null(query) || !is.character(query) || nchar(trimws(query)) == 0) {
 		stop("pull_data: 'query' must be a non-empty character string")
@@ -237,7 +231,6 @@ insert_table_local <- function(table, table_name_in_base, preface_queries=charac
 #' @examples
 #' \dontrun{truncate_table(table="foo", host=HOST, db=DB, user=USER, password=PWD)}
 truncate_table <- function(table_name_in_base, host="localhost", port=3306, db, user, password) {
-  init()
   logging::loginfo("Truncating table %s.", table_name_in_base, logger=LOGGER.MAIN)
   con <- .maria_connect(host, port, db, user, password)
   on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
@@ -350,7 +343,6 @@ edq <- function(str) {
 #' @examples
 #' \dontrun{data <- insert_table(iris, "iris_name_in_database", host=HOST, db=DB, user=user, password=pwd)}
 insert_table <- function(table, table_name_in_base, host="localhost", port=3306, db, user, password, chunk_size=NA, progress_bar=interactive(), ignore=TRUE, nolog=FALSE, allow.backslash=FALSE) {
-  init()
   table <- as.data.frame(table)                                  # data.table-safe
   if (nrow(table) == 0) {
     if (!nolog) logging::logwarn("You tried to insert an empty table. Leaving.", logger=LOGGER.MAIN)
@@ -432,7 +424,6 @@ upsertq <- function(table, table_name_in_base, ...) {
 upsert_table <- function(table, table_name_in_base, keycols, host="localhost", port=3306, db, user, password,
 	progress_bar=interactive(), nolog=FALSE
 ) {
-  init()
   table <- as.data.frame(table)                                  # data.table-safe
   if (nrow(table) == 0) {
     if (!nolog) logging::logwarn("You tried to insert an empty table. Leaving.", logger=LOGGER.MAIN)
@@ -535,7 +526,6 @@ update_table <- function(table, table_name_in_base, keycols, host="localhost", p
 	# SET `new_items_count` = `new_items_count` + 27
 	# WHERE `id`=42;
 
-  init()
   table <- as.data.frame(table)                                  # data.table-safe
   if (nrow(table) == 0) {
     if (!nolog) logging::logwarn("You tried to update with empty data. Leaving.", logger=LOGGER.MAIN)
