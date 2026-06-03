@@ -326,6 +326,7 @@ deleteq <- function(table_name_in_base, where, ...) {
 #' @param ignore should we ignore observations that produce errors?
 #' @param nolog avoid any writing to the console (when TRUE, errors are not logged either)
 #' @param allow.backslash deprecated and ignored; backslashes are now escaped correctly by DBI
+#' @return (invisibly) the number of rows affected (with ignore=TRUE, skipped duplicate rows are not counted).
 #' @keywords mysql insert
 #' @details It's important to be aware that both input table and table in database should have the same schema (matching names, matching types).
 #' @seealso pull_data, selectq, insertq
@@ -333,43 +334,40 @@ deleteq <- function(table_name_in_base, where, ...) {
 #' @examples
 #' \dontrun{data <- insert_table(iris, "iris_name_in_database", host=HOST, db=DB, user=user, password=pwd)}
 insert_table <- function(table, table_name_in_base, host="localhost", port=3306, db, user, password, chunk_size=NA, progress_bar=interactive(), ignore=TRUE, nolog=FALSE, allow.backslash=FALSE) {
-  table <- as.data.frame(table)                                  # data.table-safe
-  if (nrow(table) == 0) {
+  table <- as.data.frame(table)
+  if (nrow(table) == 0L) {
     if (!nolog) logging::logwarn("You tried to insert an empty table. Leaving.", logger=LOGGER.MAIN)
-    return(invisible())
+    return(invisible(0L))
   }
   if (!nolog) logging::loginfo("Inserting data into table %s.", table_name_in_base, logger=LOGGER.MAIN)
-  if (is.na(chunk_size)) {
-    chunk_size <- max(min(10000L, nrow(table) %/% 25L), 100L)     # integer
-  }
-  chunk_size <- as.integer(min(chunk_size, nrow(table)))
+  table[] <- lapply(table, function(col) {
+    if (is.factor(col)) col <- as.character(col)
+    if (is.numeric(col)) col[!is.finite(col)] <- NA   # NA/NaN/Inf -> NULL
+    col
+  })
+  cols <- colnames(table)
+  sql  <- build_insert_sql(table_name_in_base, cols, ignore)
+  if (is.na(chunk_size)) chunk_size <- 10000L
+  chunk_size <- as.integer(max(1L, min(chunk_size, nrow(table))))
   n_iter <- as.integer(ceiling(nrow(table) / chunk_size))
-
-  con <- .maria_connect(host, port, db, user, password)          # one connection
+  con <- .maria_connect(host, port, db, user, password)
   on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
-
-  tbl_sql  <- DBI::dbQuoteIdentifier(con, table_name_in_base)
-  cols_sql <- paste(DBI::dbQuoteIdentifier(con, colnames(table)), collapse = ",")
   pb <- if (progress_bar) create_pb(n_iter, bar_style="pc", time_style="cd") else NULL
-
-  for (i in seq_len(n_iter)) {
-    rows <- ((i - 1L) * chunk_size + 1L):min(i * chunk_size, nrow(table))
-    quoted <- lapply(table[rows, , drop = FALSE], function(col) {
-      if (is.numeric(col)) col[!is.finite(col)] <- NA   # NA/NaN/Inf/-Inf -> SQL NULL
-      as.character(DBI::dbQuoteLiteral(con, col))
-    })
-    tuples <- do.call(paste, c(quoted, sep = ","))
-    values_sql <- paste0("(", tuples, ")", collapse = ",")
-    query <- paste0("INSERT ", if (ignore) "IGNORE " else "", "INTO ", tbl_sql,
-                    " (", cols_sql, ") VALUES ", values_sql)
-    tryCatch(
-      RMariaDB::dbExecute(con, query),
-      error = function(e) if (!nolog) logging::logerror(
-        "Error while inserting chunk %d/%d: %s", i, n_iter, conditionMessage(e), logger=LOGGER.MAIN)
-    )
-    if (progress_bar) update_pb(pb, i)
-  }
-  invisible()
+  affected <- 0L
+  tryCatch(
+    DBI::dbWithTransaction(con, {
+      for (i in seq_len(n_iter)) {
+        rows <- ((i - 1L) * chunk_size + 1L):min(i * chunk_size, nrow(table))
+        affected <- affected + RMariaDB::dbExecute(con, sql, params = unname(as.list(table[rows, , drop = FALSE])))
+        if (progress_bar) update_pb(pb, i)
+      }
+    }),
+    error = function(e) {
+      if (!nolog) logging::logerror("Error inserting into %s: %s", table_name_in_base, conditionMessage(e), logger = LOGGER.MAIN)
+      stop(e)
+    }
+  )
+  invisible(affected)
 }
 
 

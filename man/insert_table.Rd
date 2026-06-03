@@ -44,6 +44,9 @@ insert_table(
 
 \item{allow.backslash}{deprecated and ignored; backslashes are now escaped correctly by DBI}
 }
+\value{
+(invisibly) the number of rows affected (with ignore=TRUE, skipped duplicate rows are not counted).
+}
 \description{
 Simple method that inserts the input data.frame or data.table into the designated table.
 }
