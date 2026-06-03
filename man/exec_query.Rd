@@ -23,7 +23,7 @@ exec_query(host = "localhost", port = 3306, db, user, password, query)
 Simple method that executes your query and doesn't return anything.
 }
 \examples{
-\dontrun{data <- pull_data(host=HOST, db=DB, user=user, password=pwd, query="select * from table;")}
+\dontrun{exec_query(host=HOST, db=DB, user=USER, password=PWD, query="TRUNCATE TABLE foo;")}
 }
 \seealso{
 insert_table

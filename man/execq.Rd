@@ -9,14 +9,14 @@ execq(query, ...)
 \arguments{
 \item{query}{query to execute}
 
-\item{...}{any argument that can be sent to `pull_data`}
+\item{...}{any other argument passed to \code{exec_query}}
 }
 \description{
 Simple wrapper around `exec_query` method, that makes credential use transparent.
 Requires credentials to be loaded, obviously.
 }
 \examples{
-\dontrun{execq('set character set "utf8"')}
+\dontrun{execq("TRUNCATE TABLE foo;")}
 }
 \seealso{
 exec_query pull_data

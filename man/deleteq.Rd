@@ -7,9 +7,11 @@
 deleteq(table_name_in_base, where, ...)
 }
 \arguments{
-\item{table_name_in_base}{table in \code{db} to insert data into}
+\item{table_name_in_base}{table in \code{db} to delete rows from}
 
-\item{where}{SQL where clause (wtihout the keyword where) specifying which rows should be deleted}
+\item{where}{SQL WHERE clause (without the WHERE keyword) selecting rows to delete. Interpolated verbatim into the statement -- the caller is responsible for sanitizing any untrusted input (this fragment is NOT escaped).}
+
+\item{...}{any other parameter passed to \code{delete_from_table}}
 }
 \description{
 Delete from table rows that match certain criteria

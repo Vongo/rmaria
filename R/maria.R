@@ -1,12 +1,27 @@
 init <- function() {
 	LOGGER.MAIN <<- "com.vongo.rmaria"
-	library(rutils, quietly=TRUE, warn.conflicts=FALSE)
-	library(magrittr, quietly=TRUE, warn.conflicts=FALSE)
-	library(logging, quietly=TRUE, warn.conflicts=FALSE)
-	library(RMariaDB, quietly=TRUE, warn.conflicts=FALSE)
 	TRUE
 }
 init()
+
+# Internal: open one MariaDB connection with utf8mb4. Caller owns disconnect.
+.maria_connect <- function(host = "localhost", port = 3306, db, user, password,
+                           local_infile = FALSE) {
+  con <- RMariaDB::dbConnect(
+    RMariaDB::MariaDB(),
+    dbname = db, host = host, port = port, user = user, password = password,
+    load_data_local_infile = local_infile
+  )
+  tryCatch(
+    RMariaDB::dbExecute(con, "SET NAMES utf8mb4"),
+    error = function(e) {
+      RMariaDB::dbDisconnect(con)
+      stop(sprintf(".maria_connect: 'SET NAMES utf8mb4' failed (host=%s, db=%s): %s",
+                   host, db, conditionMessage(e)), call. = FALSE)
+    }
+  )
+  con
+}
 
 #' Select
 #'
@@ -64,7 +79,7 @@ selectq <- function(query, ...) {
 #' @param query query to execute
 #' @param verbose output current state and warnings
 #' @param keep_int64 if TRUE, keeps int64 columns as-is; if FALSE (default), converts to numeric
-#' @param retries number of retry attempts for transient failures (default: 3)
+#' @param retries total number of query attempts including the first; default 1 means no retry
 #' @param retry_delay delay in seconds between retry attempts (default: 1)
 #' @import magrittr
 #' @keywords mysql select
@@ -104,7 +119,7 @@ pull_data <- function(host="localhost", port=3306, db, user, password, query, ve
 
 		result <- tryCatch({
 			con <- RMariaDB::dbConnect(RMariaDB::MariaDB(), user=user, password=password, dbname=db, host=host, port=port)
-			RMariaDB::dbExecute(con, 'set character set "utf8"')
+			RMariaDB::dbExecute(con, "SET NAMES utf8mb4")
 			state$data <- RMariaDB::dbGetQuery(con, query)
 			TRUE
 		}, error=function(e) {
@@ -160,12 +175,12 @@ pull_data <- function(host="localhost", port=3306, db, user, password, query, ve
 #' Simple wrapper around `exec_query` method, that makes credential use transparent.
 #' Requires credentials to be loaded, obviously.
 #' @param query query to execute
-#' @param ... any argument that can be sent to `pull_data`
+#' @param ... any other argument passed to \code{exec_query}
 #' @keywords mysql select
 #' @seealso exec_query pull_data
 #' @export
 #' @examples
-#' \dontrun{execq('set character set "utf8"')}
+#' \dontrun{execq("TRUNCATE TABLE foo;")}
 execq <- function(query, ...) {
 	target_e <- environment()
 	source_environments <- list(
@@ -212,12 +227,11 @@ execq <- function(query, ...) {
 #' @seealso insert_table
 #' @export
 #' @examples
-#' \dontrun{data <- pull_data(host=HOST, db=DB, user=user, password=pwd, query="select * from table;")}
+#' \dontrun{exec_query(host=HOST, db=DB, user=USER, password=PWD, query="TRUNCATE TABLE foo;")}
 exec_query <- function(host="localhost", port=3306, db, user, password, query) {
-	con <- RMariaDB::dbConnect(RMariaDB::MariaDB(), user=user, password=password, dbname=db, host=host, port=port)
-	RMariaDB::dbExecute(con, 'set character set "utf8"')
-	RMariaDB::dbExecute(con, query)
-	RMariaDB::dbDisconnect(con)
+  con <- .maria_connect(host, port, db, user, password)
+  on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+  RMariaDB::dbExecute(con, query)
 }
 
 #' Simplified bulk insert
@@ -261,41 +275,37 @@ insert_table_local <- function(table, table_name_in_base, preface_queries=charac
 		assign("HOST", get("HOST", envir=source_e), envir=target_e)
 		assign("PWD", get("PWD", envir=source_e), envir=target_e)
 		assign("USER", get("USER", envir=source_e), envir=target_e)
+		PORT <- if (exists("PORT", envir=source_e)) suppressWarnings(as.integer(get("PORT", envir=source_e))) else 3306L
+		if (is.na(PORT)) {
+			logging::logerror("insert_table_local: PORT is not a valid integer; defaulting to 3306.", logger=LOGGER.MAIN)
+			PORT <- 3306L
+		}
 	} else {
 		init()
 		logging::logerror("Context was not initialized properly. See `?load_env` for more information.", logger=LOGGER.MAIN)
 		return(FALSE)
 	}
-	library(RMariaDB)
+	table <- as.data.frame(table)
 	con <- NULL
 	tryCatch({
-		con <- RMariaDB::dbConnect(
-			RMariaDB::MariaDB(),
-			host=HOST, db=DB, user=USER, password=PWD, port=3306,
-			load_data_local_infile=use_file
-		)
+		con <- .maria_connect(HOST, PORT, DB, USER, PWD, local_infile = use_file)
 		if (length(preface_queries)>0) {
 			for (preface_query in preface_queries) {
 				RMariaDB::dbExecute(con, preface_query)
 			}
 		}
-		RMariaDB::dbExecute(con, "set character set \"utf8mb4\"")
-		# RMariaDB::dbExecute(con, "SET character_set_client = \"utf8mb4\";")
-		# RMariaDB::dbExecute(con, "SET character_set_results = \"utf8mb4\";")
-		# RMariaDB::dbExecute(con, "SET character_set_connection = \"utf8mb4\";")
-		# print(RMariaDB::dbGetQuery(con, "SELECT @@character_set_client;"))
 		if (nrow(table)>=split_threshold) {
 			start <- 1
-			while (start < nrow(table)) {
+			while (start <= nrow(table)) {
 				end <- min(nrow(table), start+split_threshold-1)
-				RMariaDB::dbWriteTable(con, table_name_in_base, table[seq(start, end), names(table), drop=FALSE], append=TRUE)
+				RMariaDB::dbWriteTable(con, table_name_in_base, table[seq(start, end), , drop=FALSE], append=TRUE)
 				start <- end + 1
 			}
 		} else {
 			RMariaDB::dbWriteTable(con, table_name_in_base, table, append=TRUE)
 		}
 	}, error=function(e) {
-		logging::logerror("Error while inserting data into table %s: %s", table_name_in_base, e)
+		logging::logerror("Error while inserting data into table %s: %s", table_name_in_base, conditionMessage(e), logger=LOGGER.MAIN)
 	}, finally={
 		if (!is.null(con)) RMariaDB::dbDisconnect(con)
 	})
@@ -315,12 +325,11 @@ insert_table_local <- function(table, table_name_in_base, preface_queries=charac
 #' @examples
 #' \dontrun{truncate_table(table="foo", host=HOST, db=DB, user=USER, password=PWD)}
 truncate_table <- function(table_name_in_base, host="localhost", port=3306, db, user, password) {
-	init()
-	logging::loginfo("Truncating table %s.", table_name_in_base, logger=LOGGER.MAIN)
-	query <- paste0("TRUNCATE TABLE `", table_name_in_base, "`;")
-	con <- RMariaDB::dbConnect(RMariaDB::MariaDB(), user=user, password=password, dbname=db, host=host, port=port)
-	RMariaDB::dbExecute(con, query)
-	RMariaDB::dbDisconnect(con)
+  init()
+  logging::loginfo("Truncating table %s.", table_name_in_base, logger=LOGGER.MAIN)
+  con <- .maria_connect(host, port, db, user, password)
+  on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+  RMariaDB::dbExecute(con, paste0("TRUNCATE TABLE ", DBI::dbQuoteIdentifier(con, table_name_in_base)))
 }
 
 insert_source_full_file <- function(src, host="localhost", port=3306, db, user, password) {
@@ -384,8 +393,8 @@ insertq <- function(table, table_name_in_base, ...) {
 #' Delete query
 #'
 #' Delete from table rows that match certain criteria
-#' @param table_name_in_base table in \code{db} to insert data into
-#' @param where SQL where clause (wtihout the keyword where) specifying which rows should be deleted
+#' @param table_name_in_base table in \code{db} to delete rows from
+#' @param where SQL WHERE clause (without the WHERE keyword) selecting rows to delete. Interpolated verbatim into the statement -- the caller is responsible for sanitizing any untrusted input (this fragment is NOT escaped).
 #' @param host host
 #' @param port port
 #' @param db default database name
@@ -396,17 +405,22 @@ insertq <- function(table, table_name_in_base, ...) {
 #' @examples
 #' \dontrun{delete_from_table(table_name_in_base="foo", where="id in (1, 2, 3)", host=HOST, db=DB, user=USER, password=PWD)}
 delete_from_table <- function(table_name_in_base, where, host="localhost", port=3306, db, user, password) {
-	con <- RMariaDB::dbConnect(RMariaDB::MariaDB(), user=user, password=password, dbname=db, host=host, port=port)
-	RMariaDB::dbExecute(con, 'set character set "utf8"')
-	suppressWarnings(RMariaDB::dbExecute(con, paste0("DELETE FROM ", table_name_in_base, " WHERE ", where)))
-	RMariaDB::dbDisconnect(con)
+  if (missing(where) || !is.character(where) || length(where) != 1L || !nzchar(trimws(where))) {
+    stop("delete_from_table: 'where' must be a non-empty SQL WHERE clause (use truncate_table to empty a table)")
+  }
+  con <- .maria_connect(host, port, db, user, password)
+  on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+  RMariaDB::dbExecute(con,
+    paste0("DELETE FROM ", DBI::dbQuoteIdentifier(con, table_name_in_base),
+           " WHERE ", where))
 }
 
 #' Simplified delete query
 #'
 #' Delete from table rows that match certain criteria
-#' @param table_name_in_base table in \code{db} to insert data into
-#' @param where SQL where clause (wtihout the keyword where) specifying which rows should be deleted
+#' @param table_name_in_base table in \code{db} to delete rows from
+#' @param where SQL WHERE clause (without the WHERE keyword) selecting rows to delete. Interpolated verbatim into the statement -- the caller is responsible for sanitizing any untrusted input (this fragment is NOT escaped).
+#' @param ... any other parameter passed to \code{delete_from_table}
 #' @keywords mysql delete
 #' @export
 #' @examples
@@ -467,7 +481,8 @@ edq <- function(str) {
 #' @param chunk_size how many elements should be inserted at a time
 #' @param progress_bar nice progress bar to use, it's recommended to disable it in log mode
 #' @param ignore should we ignore observations that produce errors?
-#' @param nolog avoid any writing to the console
+#' @param nolog avoid any writing to the console (when TRUE, errors are not logged either)
+#' @param allow.backslash deprecated and ignored; backslashes are now escaped correctly by DBI
 #' @keywords mysql insert
 #' @details It's important to be aware that both input table and table in database should have the same schema (matching names, matching types).
 #' @seealso pull_data, selectq, insertq
@@ -475,60 +490,44 @@ edq <- function(str) {
 #' @examples
 #' \dontrun{data <- insert_table(iris, "iris_name_in_database", host=HOST, db=DB, user=user, password=pwd)}
 insert_table <- function(table, table_name_in_base, host="localhost", port=3306, db, user, password, chunk_size=NA, progress_bar=interactive(), ignore=TRUE, nolog=FALSE, allow.backslash=FALSE) {
-	init()
-	if (nrow(table) == 0) {
-		if (!nolog) logging::logwarn("You tried to insert an empty table. Leaving.", logger=LOGGER.MAIN)
-		return()
-	}
-	if (!nolog) logging::loginfo("Inserting data into table %s.", table_name_in_base, logger=LOGGER.MAIN)
-	if (is.na(chunk_size)) {
-		chunk_size <- max(min(10000, nrow(table)/25), 100)
-	}
-	chunk_size <- min(chunk_size, nrow(table))
-	n_iter <- ceiling(nrow(table)/chunk_size)
-	has_quotes <- sapply(seq(ncol(table)), function(ic) !(is.numeric(table[,ic]) || is.logical(table[,ic])))
-	pb <- if(progress_bar) create_pb(n_iter, bar_style="pc", time_style="cd") else NULL
-	for (i in seq(n_iter)) {
-		query <- paste0("INSERT ", `if`(ignore, "IGNORE ", ""), "INTO ", table_name_in_base, "(",
-			paste0(colnames(table), collapse=","), ") VALUES ")
-		vals <- character(0)
-		for (j in seq(chunk_size)) {
-			k <- (i-1)*chunk_size+j
-			if (k <= nrow(table)) {
-				vals[j] <- paste0("(",
-					paste0(
-						sapply(seq(ncol(table)), function(ic) {
-							if ((table[k, ic] %>% {is.na(.) || is.nan(.) || (is.numeric(.) && !is.finite(.))})) {
-								"Qù@ñÐĲ€T@IS©H€ZMŒZI//@"
-							} else {
-								if(has_quotes[ic]) {
-									table[k, ic] |>
-										gsub("'", '\'', x=_) |>
-										gsub('"', '\'', x=_) %>%
-										{`if`(allow.backslash, gsub("\\\\0", "/0", .), gsub("\\\\", "/", .))} %>%
-										{paste0('"', ., '"')}
-								} else {
-									table[k, ic]
-								}
-							}
-						}), collapse=","
-					), ")"
-				)
-			}
-		}
-		query <- gsub("Qù@ñÐĲ€T@IS©H€ZMŒZI//@", "NULL", paste0(query, paste0(vals, collapse=',')))
-		tryCatch({
-				exec_query(host=host, port=port, db=db, user=user, password=password, query=query)
-			},
-			warn=function(w) {
-				if (!nolog) logging::logwarn("Warning while inserting query [%s]: [%s]", query, w, logger=LOGGER.MAIN)
-			},
-			error=function(e) {
-				if (!nolog) logging::logerror("Error while inserting query [%s]: [%s]", query, e, logger=LOGGER.MAIN)
-			}
-		)
-		if (progress_bar) update_pb(pb, i)
-	}
+  init()
+  table <- as.data.frame(table)                                  # data.table-safe
+  if (nrow(table) == 0) {
+    if (!nolog) logging::logwarn("You tried to insert an empty table. Leaving.", logger=LOGGER.MAIN)
+    return(invisible())
+  }
+  if (!nolog) logging::loginfo("Inserting data into table %s.", table_name_in_base, logger=LOGGER.MAIN)
+  if (is.na(chunk_size)) {
+    chunk_size <- max(min(10000L, nrow(table) %/% 25L), 100L)     # integer
+  }
+  chunk_size <- as.integer(min(chunk_size, nrow(table)))
+  n_iter <- as.integer(ceiling(nrow(table) / chunk_size))
+
+  con <- .maria_connect(host, port, db, user, password)          # one connection
+  on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+
+  tbl_sql  <- DBI::dbQuoteIdentifier(con, table_name_in_base)
+  cols_sql <- paste(DBI::dbQuoteIdentifier(con, colnames(table)), collapse = ",")
+  pb <- if (progress_bar) create_pb(n_iter, bar_style="pc", time_style="cd") else NULL
+
+  for (i in seq_len(n_iter)) {
+    rows <- ((i - 1L) * chunk_size + 1L):min(i * chunk_size, nrow(table))
+    quoted <- lapply(table[rows, , drop = FALSE], function(col) {
+      if (is.numeric(col)) col[!is.finite(col)] <- NA   # NA/NaN/Inf/-Inf -> SQL NULL
+      as.character(DBI::dbQuoteLiteral(con, col))
+    })
+    tuples <- do.call(paste, c(quoted, sep = ","))
+    values_sql <- paste0("(", tuples, ")", collapse = ",")
+    query <- paste0("INSERT ", if (ignore) "IGNORE " else "", "INTO ", tbl_sql,
+                    " (", cols_sql, ") VALUES ", values_sql)
+    tryCatch(
+      RMariaDB::dbExecute(con, query),
+      error = function(e) if (!nolog) logging::logerror(
+        "Error while inserting chunk %d/%d: %s", i, n_iter, conditionMessage(e), logger=LOGGER.MAIN)
+    )
+    if (progress_bar) update_pb(pb, i)
+  }
+  invisible()
 }
 
 
@@ -586,71 +585,75 @@ upsertq <- function(table, table_name_in_base, ...) {
 #' @param user user
 #' @param password password
 #' @param table data.frame or data.table to insert
-#' @param table_name_in_base table in {db} to insert data into
+#' @param table_name_in_base table in {db} to upsert data into
 #' @param progress_bar nice progress bar to use, it's recommended to disable it in log mode
-#' @param nolog avoid any writing to the console
-#' @param keycols name of the colums that
+#' @param nolog avoid any writing to the console (when TRUE, errors are not logged either)
+#' @param keycols character vector naming the key column(s) used to identify rows (excluded from the SET/UPDATE clause)
 #' @keywords mysql insert
 #' @details It's important to be aware that both input table and table in database should have the same schema (matching names, matching types).
 #' @seealso pull_data, selectq, insertq
 #' @export
 #' @examples
-#' \dontrun{data <- insert_table(iris, "iris_name_in_database", keycols=c("id"), host=HOST, db=DB, user=user, password=pwd)}
+#' \dontrun{upsert_table(my_data, "table_name", keycols=c("id"), host=HOST, db=DB, user=USER, password=PWD)}
 upsert_table <- function(table, table_name_in_base, keycols, host="localhost", port=3306, db, user, password,
 	progress_bar=interactive(), nolog=FALSE
 ) {
-	# INSERT INTO `item`
-	# (`item_name`, items_in_stock)
-	# VALUES( 'A', 27)
-	# ON DUPLICATE KEY UPDATE
-	# `new_items_count` = `new_items_count` + 27
+  init()
+  table <- as.data.frame(table)                                  # data.table-safe
+  if (nrow(table) == 0) {
+    if (!nolog) logging::logwarn("You tried to insert an empty table. Leaving.", logger=LOGGER.MAIN)
+    return(invisible())
+  }
+  if (missing(keycols) || length(keycols) == 0L) {
+    stop("upsert_table: 'keycols' must name the key column(s) used to detect duplicates")
+  }
+  unknown_keys <- setdiff(keycols, colnames(table))
+  if (length(unknown_keys) > 0L) {
+    stop("upsert_table: keycols not found in table: ", paste(unknown_keys, collapse = ", "))
+  }
+  if (!nolog) logging::loginfo("Upserting %s rows data into table %s.", nrow(table), table_name_in_base, logger=LOGGER.MAIN)
 
-	init()
-	if (nrow(table) == 0) {
-		if (!nolog) logging::logwarn("You tried to insert an empty table. Leaving.", logger=LOGGER.MAIN)
-		return()
-	}
-	if (!nolog) logging::loginfo("Upserting %s rows data into table %s.", nrow(table), table_name_in_base, logger=LOGGER.MAIN)
+  con <- .maria_connect(host, port, db, user, password)          # one connection
+  on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
 
-	has_quotes <- sapply(seq(ncol(table)), function(ic) !(is.numeric(table[,ic]) || is.logical(table[,ic])))
-	pb <- if(progress_bar) create_pb(nrow(table), bar_style="pc", time_style="cd") else NULL
-	for (i in seq(nrow(table))) {
-		prefix <- paste0("INSERT INTO ", table_name_in_base, "(", paste0(colnames(table), collapse=","), ") VALUES ")
-		values <- paste0("(",
-			paste0(
-				sapply(seq(ncol(table)), function(ic) {
-					if ((table[i, ic] %>% {is.na(.) || is.nan(.) || (is.numeric(.) && !is.finite(.))})) {
-						"\"Qù@ñÐĲ€T@IS©H€ZMŒZI//@\""
-					} else `if`(has_quotes[ic], paste0("'", gsub("'", '"', table[i, ic]), "'"), table[i, ic])
-				}), collapse=","
-			), ")"
-		)
-		suffix <- paste0(
-			" ON DUPLICATE KEY UPDATE ",
-			which(colnames(table) %ni% keycols) |> sapply(function(ic) {
-				if ((table[i, ic] %>% {is.na(.) || is.nan(.) || (is.numeric(.) && !is.finite(.))})) {
-					""
-				} else {
-					paste(
-						colnames(table)[ic],
-						`if`(has_quotes[ic], paste0("'", gsub("'", '\"', table[i, ic]), "'"), table[i, ic]),
-						sep="="
-					)
-				}
-			}) %>% .[map_lgl(., ~nchar(.x)>0)] |> paste(collapse = ",")
-		)
-		query <- paste0(prefix, gsub("\"Qù@ñÐĲ€T@IS©H€ZMŒZI//@\"", "NULL", values), suffix, ";")
-		tryCatch(
-			{exec_query(host, port, db, user, password, query)},
-			warn=function(w) {
-				if (!nolog) logging::logwarn("Warning while upserting query [%s]: [%s]", query, w, logger=LOGGER.MAIN)
-			},
-			error=function(e) {
-				if (!nolog) logging::logerror("Error while upserting query [%s]: [%s]", query, e, logger=LOGGER.MAIN)
-			}
-		)
-		if (progress_bar) update_pb(pb, i)
-	}
+  tbl_sql  <- DBI::dbQuoteIdentifier(con, table_name_in_base)
+  cols_sql <- paste(DBI::dbQuoteIdentifier(con, colnames(table)), collapse = ",")
+  non_key  <- which(colnames(table) %ni% keycols)
+  pb <- if (progress_bar) create_pb(nrow(table), bar_style="pc", time_style="cd") else NULL
+
+  for (i in seq_len(nrow(table))) {
+    # Per-cell SQL literals; non-finite numerics -> NA -> NULL.
+    lit <- vapply(seq_len(ncol(table)), function(ic) {
+      v <- table[i, ic]
+      if (is.numeric(v) && !is.finite(v)) v <- NA_real_
+      as.character(DBI::dbQuoteLiteral(con, v))
+    }, character(1))
+    values_sql <- paste0("(", paste(lit, collapse = ","), ")")
+    # ON DUPLICATE KEY UPDATE only for non-key columns whose value is not null-ish.
+    set_parts <- vapply(non_key, function(ic) {
+      # lit[ic] is "NULL" (unquoted) only for SQL NULLs; the string "NULL" quotes as "'NULL'".
+      if (identical(lit[ic], "NULL")) return("")
+      paste0(DBI::dbQuoteIdentifier(con, colnames(table)[ic]), "=", lit[ic])
+    }, character(1))
+    set_parts <- set_parts[nzchar(set_parts)]
+    # Empty when all non-key cols are null-ish OR there are no non-key cols (keys-only table); INSERT IGNORE is correct in both.
+    if (length(set_parts) == 0L) {
+      if (!nolog) logging::logwarn(
+        "upsert_table: row %d has no updatable (non-key, non-NULL) columns; using INSERT IGNORE (existing row left unchanged)",
+        i, logger = LOGGER.MAIN)
+      query <- paste0("INSERT IGNORE INTO ", tbl_sql, " (", cols_sql, ") VALUES ", values_sql, ";")
+    } else {
+      query <- paste0("INSERT INTO ", tbl_sql, " (", cols_sql, ") VALUES ", values_sql,
+                      " ON DUPLICATE KEY UPDATE ", paste(set_parts, collapse = ","), ";")
+    }
+    tryCatch(
+      RMariaDB::dbExecute(con, query),
+      error = function(e) if (!nolog) logging::logerror(
+        "Error while upserting row %d: %s", i, conditionMessage(e), logger=LOGGER.MAIN)
+    )
+    if (progress_bar) update_pb(pb, i)
+  }
+  invisible()
 }
 
 #' Simplified update
@@ -700,23 +703,23 @@ updateq <- function(table, table_name_in_base, ...) {
 
 #' Update
 #'
-#' Simple method that inserts the input data.frame or data.table into the designated table, or updates it if the key already exists.
+#' Simple method that updates rows in the designated table, matching existing rows on the key column(s).
 #' @param host host
 #' @param port port
 #' @param db default database name
 #' @param user user
 #' @param password password
-#' @param table data.frame or data.table to insert
-#' @param table_name_in_base table in {db} to insert data into
+#' @param table data.frame or data.table whose rows update matching rows in the database
+#' @param table_name_in_base table in {db} to update rows in
 #' @param progress_bar nice progress bar to use, it's recommended to disable it in log mode
-#' @param nolog avoid any writing to the console
-#' @param keycols name of the colums that
-#' @keywords mysql insert
+#' @param nolog avoid any writing to the console (when TRUE, errors are not logged either)
+#' @param keycols character vector naming the key column(s) used to identify rows (excluded from the SET/UPDATE clause)
+#' @keywords mysql update
 #' @details It's important to be aware that both input table and table in database should have the same schema (matching names, matching types).
 #' @seealso pull_data, selectq, insertq
 #' @export
 #' @examples
-#' \dontrun{data <- insert_table(iris, "iris_name_in_database", keycols=c("id"), host=HOST, db=DB, user=user, password=pwd)}
+#' \dontrun{update_table(my_data, "table_name", keycols=c("id"), host=HOST, db=DB, user=USER, password=PWD)}
 update_table <- function(table, table_name_in_base, keycols, host="localhost", port=3306, db, user, password,
 	progress_bar=interactive(), nolog=FALSE
 ) {
@@ -724,59 +727,51 @@ update_table <- function(table, table_name_in_base, keycols, host="localhost", p
 	# SET `new_items_count` = `new_items_count` + 27
 	# WHERE `id`=42;
 
-	init()
-	if (nrow(table) == 0) {
-		if (!nolog) logging::logwarn("You tried to update with empty data. Leaving.", logger=LOGGER.MAIN)
-		return()
-	}
-	if (!nolog) logging::loginfo("updating %s rows data into table %s.", nrow(table), table_name_in_base, logger=LOGGER.MAIN)
+  init()
+  table <- as.data.frame(table)                                  # data.table-safe
+  if (nrow(table) == 0) {
+    if (!nolog) logging::logwarn("You tried to update with empty data. Leaving.", logger=LOGGER.MAIN)
+    return(invisible())
+  }
+  if (missing(keycols) || length(keycols) == 0L) {
+    stop("update_table: 'keycols' must name the key column(s) used in the WHERE clause")
+  }
+  unknown_keys <- setdiff(keycols, colnames(table))
+  if (length(unknown_keys) > 0L) {
+    stop("update_table: keycols not found in table: ", paste(unknown_keys, collapse = ", "))
+  }
+  if (!nolog) logging::loginfo("Updating %s rows data into table %s.", nrow(table), table_name_in_base, logger=LOGGER.MAIN)
 
-	has_quotes <- table |> purrr::map_lgl(~!(is.numeric(.x)||is.logical(.x)))
-	pb <- if(progress_bar) create_pb(nrow(table), bar_style="pc", time_style="cd") else NULL
-	for (i in seq(nrow(table))) {
-		prefix <- paste0("UPDATE ", table_name_in_base, " SET ")
-		suffix <- paste(
-			which(colnames(table) %ni% keycols) |> sapply(function(ic) {
-				value <- table[i, ic] |> unlist()
-				if (is.na(value) || is.nan(value) || (is.numeric(value) && !is.finite(value))) {
-					""
-				} else {
-					paste(
-						colnames(table)[ic],
-						`if`(has_quotes[ic], paste0("'", gsub("'", '\"', value), "'"), value),
-						sep="="
-					)
-				}
-			}) %>% .[map_lgl(., ~nchar(.x)>0)] |> paste(collapse = ","),
-			"where",
-			which(colnames(table) %in% keycols) |> sapply(function(ic) {
-				value <- table[i, ic] |> unlist()
-				if (is.na(value) || is.nan(value) || (is.numeric(value) && !is.finite(value))) {
-					""
-				} else {
-					paste(
-						colnames(table)[ic],
-						`if`(has_quotes[ic], paste0("'", gsub("'", '\"', value), "'"), value),
-						sep="="
-					)
-				}
-			}) %>% .[map_lgl(., ~nchar(.x)>0)] |> paste(collapse = " and ")
-		)
-		if (grepl("^[ ]*where", suffix) | grepl("where[ ]*$", suffix)) {
-			if (!nolog) logging::logfinest("Skipping incomplete row with index [%s]", i, logger=LOGGER.MAIN)
-			next
-		}
-		query <- paste0(prefix, suffix, ";")
-		tryCatch({
-				exec_query(host, port, db, user, password, query)
-			},
-			warn=function(w) {
-				if (!nolog) logging::logwarn("Warning while updating query [%s]: [%s]", query, w, logger=LOGGER.MAIN)
-			},
-			error=function(e) {
-				if (!nolog) logging::logerror("Error while updating query [%s]: [%s]", query, e, logger=LOGGER.MAIN)
-			}
-		)
-		if (progress_bar) update_pb(pb, i)
-	}
+  con <- .maria_connect(host, port, db, user, password)          # one connection
+  on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+
+  tbl_sql  <- DBI::dbQuoteIdentifier(con, table_name_in_base)
+  set_cols <- which(colnames(table) %ni% keycols)
+  key_cols <- which(colnames(table) %in% keycols)
+  pb <- if (progress_bar) create_pb(nrow(table), bar_style="pc", time_style="cd") else NULL
+
+  for (i in seq_len(nrow(table))) {
+    clause <- function(ic) {
+      v <- table[i, ic]
+      if (is.numeric(v) && !is.finite(v)) v <- NA          # NA/NaN/Inf/-Inf -> skip
+      if (is.na(v)) return("")
+      paste0(DBI::dbQuoteIdentifier(con, colnames(table)[ic]), "=",
+             as.character(DBI::dbQuoteLiteral(con, v)))
+    }
+    set_parts   <- vapply(set_cols, clause, character(1)); set_parts   <- set_parts[nzchar(set_parts)]
+    where_parts <- vapply(key_cols, clause, character(1)); where_parts <- where_parts[nzchar(where_parts)]
+    if (length(set_parts) == 0L || length(where_parts) < length(key_cols)) {
+      if (!nolog) logging::logfinest("Skipping incomplete row with index [%s]", i, logger=LOGGER.MAIN)
+      next
+    }
+    query <- paste0("UPDATE ", tbl_sql, " SET ", paste(set_parts, collapse = ","),
+                    " WHERE ", paste(where_parts, collapse = " AND "), ";")
+    tryCatch(
+      RMariaDB::dbExecute(con, query),
+      error = function(e) if (!nolog) logging::logerror(
+        "Error while updating row %d: %s", i, conditionMessage(e), logger=LOGGER.MAIN)
+    )
+    if (progress_bar) update_pb(pb, i)
+  }
+  invisible()
 }
