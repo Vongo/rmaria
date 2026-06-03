@@ -46,7 +46,6 @@ insert_source_full_file <- function(src, host="localhost", port=3306, db, user, 
 	# Retrieving the path where MYSQL can read from (if any)
 	# Only problem is that you should have the right to write there
 	path <- paste0(pull_data(host, port, db, user, password, "SHOW VARIABLES LIKE 'secure_file_priv';")["Value"], "tmp.csv")
-	print(path)
 	RMariaDB::dbExecute(con, 'set character set "utf8"')
 	utils::write.table(src, path, row.names=FALSE, col.names=FALSE, sep='\t')
 	query = paste0("LOAD DATA INFILE '", path, "' INTO TABLE uplift_source")
