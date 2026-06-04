@@ -45,3 +45,16 @@ test_that("selectq stops (not FALSE) when credentials are absent", {
   rm(list = intersect(c("DB","HOST","USER","PWD"), ls(envir = globalenv())), envir = globalenv())
   expect_error(selectq("SELECT 1"), "credentials not found")
 })
+
+test_that("resolve_credentials coerces a valid string PORT", {
+  wrapper <- function() resolve_credentials()
+  f <- function() { DB<-"d"; HOST<-"h"; USER<-"u"; PWD<-"p"; PORT<-"33306"; wrapper() }
+  expect_equal(f()$port, 33306L)
+})
+
+test_that("resolve_credentials warns and defaults to 3306 for a non-numeric PORT", {
+  wrapper <- function() resolve_credentials()
+  f <- function() { DB<-"d"; HOST<-"h"; USER<-"u"; PWD<-"p"; PORT<-"bad"; wrapper() }
+  expect_warning(cr <- f(), "not a valid integer")
+  expect_equal(cr$port, 3306L)
+})

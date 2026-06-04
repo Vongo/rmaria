@@ -148,7 +148,19 @@ execq <- function(query, ...) {
 #' @examples
 #' \dontrun{exec_query(host=HOST, db=DB, user=USER, password=PWD, query="TRUNCATE TABLE foo;")}
 exec_query <- function(host="localhost", port=3306, db, user, password, query) {
+  if (missing(query) || is.null(query) || !is.character(query) || nchar(trimws(query)) == 0) {
+    stop("exec_query: 'query' must be a non-empty character string")
+  }
+  if (missing(db) || is.null(db) || !is.character(db) || nchar(trimws(db)) == 0) {
+    stop("exec_query: 'db' must be a non-empty character string")
+  }
   con <- .maria_connect(host, port, db, user, password)
   on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
-  RMariaDB::dbExecute(con, query)
+  tryCatch(
+    RMariaDB::dbExecute(con, query),
+    error = function(e) {
+      logging::logerror("exec_query failed on db=%s: %s", db, conditionMessage(e), logger = LOGGER.MAIN)
+      stop(e)
+    }
+  )
 }

@@ -46,3 +46,34 @@ test_that("upsert_table handles a multi-chunk batch", {
     expect_equal(as.integer(cnt), 2500L)
   })
 })
+
+test_that("upsert_table COALESCE skips NULL on an EXISTING nullable non-key column", {
+  skip_if_no_db(); e <- db_env()
+  # NOTE: MariaDB STRICT_TRANS_TABLES rejects NULL in VALUES() even for ON DUPLICATE KEY UPDATE,
+  # so a NOT NULL column cannot be used here. Testing COALESCE behavior with a nullable column.
+  with_test_table("CREATE TABLE t_up_nn (id INT PRIMARY KEY, v INT)", "t_up_nn", {
+    con0 <- test_con(); on.exit(RMariaDB::dbDisconnect(con0), add=TRUE)
+    RMariaDB::dbExecute(con0, "INSERT INTO t_up_nn VALUES (1, 42)")
+    expect_no_error(
+      upsert_table(data.frame(id=1L, v=NA_integer_), "t_up_nn", keycols="id",
+                   host=e$host, port=e$port, db=e$db, user=e$user, password=e$pwd, progress_bar=FALSE)
+    )
+    got <- pull_data(host=e$host, port=e$port, db=e$db, user=e$user, password=e$pwd,
+                     query="SELECT v FROM t_up_nn WHERE id=1", verbose=FALSE)
+    expect_equal(got$v[1], 42L)   # COALESCE kept 42; NULL incoming did not overwrite
+  })
+})
+
+test_that("upsert_table returns 0 for an empty frame", {
+  skip_if_no_db(); e <- db_env()
+  with_test_table("CREATE TABLE t_up_e (id INT PRIMARY KEY, v INT)", "t_up_e", {
+    n <- upsert_table(data.frame(id=integer(0), v=integer(0)), "t_up_e", keycols="id",
+                      host=e$host, port=e$port, db=e$db, user=e$user, password=e$pwd, progress_bar=FALSE)
+    expect_equal(as.integer(n), 0L)
+  })
+})
+
+test_that("upsert_table stops on missing/empty keycols", {
+  expect_error(upsert_table(data.frame(id=1, v=2), "t", host="127.0.0.1", port=33306, db="rmaria_test", user="root", password="test"), "keycols")
+  expect_error(upsert_table(data.frame(id=1, v=2), "t", keycols=character(0), host="127.0.0.1", port=33306, db="rmaria_test", user="root", password="test"), "keycols")
+})

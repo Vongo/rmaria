@@ -50,3 +50,10 @@ test_that("builders reject empty cols / keycols / no-update", {
   expect_error(build_update_join_sql("t", "tmp", c("id", "v"), keycols = character(0)), "non-empty")
   expect_error(build_update_join_sql("t", "tmp", c("id"), keycols = "id"), "no non-key")
 })
+
+test_that("build_upsert_sql handles composite keycols", {
+  expect_equal(
+    build_upsert_sql("t", c("id1", "id2", "v"), keycols = c("id1", "id2")),
+    "INSERT INTO `t` (`id1`,`id2`,`v`) VALUES (?,?,?) ON DUPLICATE KEY UPDATE `v`=COALESCE(VALUES(`v`),`v`)"
+  )
+})

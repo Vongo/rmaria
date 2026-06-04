@@ -43,6 +43,7 @@ insert_table_local <- function(table, table_name_in_base, preface_queries=charac
 
 insert_source_full_file <- function(src, host="localhost", port=3306, db, user, password) {
 	con <- RMariaDB::dbConnect(RMariaDB::MariaDB(), user=user, password=password, dbname=db, host=host, port=port)
+	on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
 	# Retrieving the path where MYSQL can read from (if any)
 	# Only problem is that you should have the right to write there
 	path <- paste0(pull_data(host, port, db, user, password, "SHOW VARIABLES LIKE 'secure_file_priv';")["Value"], "tmp.csv")

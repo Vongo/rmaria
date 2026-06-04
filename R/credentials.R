@@ -22,8 +22,13 @@ resolve_credentials <- function() {
   )
   for (e in envs) {
     if (all(vapply(needed, exists, logical(1), envir = e, inherits = TRUE))) {
-      port <- if (exists("PORT", envir = e, inherits = TRUE)) suppressWarnings(as.integer(get("PORT", envir = e))) else 3306L
-      if (length(port) != 1L || is.na(port)) port <- 3306L
+      port_raw <- if (exists("PORT", envir = e, inherits = TRUE)) get("PORT", envir = e, inherits = TRUE) else 3306L
+      port <- suppressWarnings(as.integer(port_raw))
+      if (length(port) != 1L || is.na(port)) {
+        warning(sprintf("rmaria: PORT value '%s' is not a valid integer; defaulting to 3306.",
+                        as.character(port_raw)[1]), call. = FALSE)
+        port <- 3306L
+      }
       return(list(
         host = get("HOST", envir = e), db = get("DB", envir = e),
         user = get("USER", envir = e), pwd = get("PWD", envir = e), port = port

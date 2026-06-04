@@ -89,3 +89,8 @@ test_that("update_table rolls back on error (atomic)", {
     expect_equal(got$v[1], 10L)   # unchanged -- rolled back
   })
 })
+
+test_that("update_table stops on missing/empty keycols", {
+  expect_error(update_table(data.frame(id=1, v=2), "t", host="127.0.0.1", port=33306, db="rmaria_test", user="root", password="test"), "keycols")
+  expect_error(update_table(data.frame(id=1, v=2), "t", keycols=character(0), host="127.0.0.1", port=33306, db="rmaria_test", user="root", password="test"), "keycols")
+})

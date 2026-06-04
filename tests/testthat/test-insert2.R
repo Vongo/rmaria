@@ -56,3 +56,38 @@ test_that("insert_table inserts every row for a >1-chunk batch (chunk_size small
     expect_equal(as.integer(n), 2501L)
   })
 })
+
+test_that("insert_table rolls back ALL chunks when a later chunk fails (cross-chunk atomicity)", {
+  skip_if_no_db(); e <- db_env()
+  with_test_table("CREATE TABLE t_ins_atom2 (id INT PRIMARY KEY)", "t_ins_atom2", {
+    expect_error(
+      insert_table(data.frame(id=c(1L,1L)), "t_ins_atom2", host=e$host, port=e$port, db=e$db,
+                   user=e$user, password=e$pwd, progress_bar=FALSE, chunk_size=1L, ignore=FALSE)
+    )
+    n <- pull_data(host=e$host, port=e$port, db=e$db, user=e$user, password=e$pwd,
+                   query="SELECT COUNT(*) AS n FROM t_ins_atom2", verbose=FALSE)$n
+    expect_equal(as.integer(n), 0L)   # chunk 1 rolled back when chunk 2 failed
+  })
+})
+
+test_that("insert_table returns 0 for an empty frame", {
+  skip_if_no_db(); e <- db_env()
+  with_test_table("CREATE TABLE t_ins_e (id INT)", "t_ins_e", {
+    n <- insert_table(data.frame(id=integer(0)), "t_ins_e", host=e$host, port=e$port, db=e$db,
+                      user=e$user, password=e$pwd, progress_bar=FALSE)
+    expect_equal(as.integer(n), 0L)
+  })
+})
+
+test_that("insert_table with ignore=TRUE (default) silently skips duplicate keys", {
+  skip_if_no_db(); e <- db_env()
+  with_test_table("CREATE TABLE t_ins_ig (id INT PRIMARY KEY)", "t_ins_ig", {
+    expect_no_error(
+      insert_table(data.frame(id=c(1L,1L,2L)), "t_ins_ig", host=e$host, port=e$port, db=e$db,
+                   user=e$user, password=e$pwd, progress_bar=FALSE)  # ignore=TRUE default
+    )
+    n <- pull_data(host=e$host, port=e$port, db=e$db, user=e$user, password=e$pwd,
+                   query="SELECT COUNT(*) AS n FROM t_ins_ig", verbose=FALSE)$n
+    expect_equal(as.integer(n), 2L)   # dup id=1 skipped; 1 and 2 present
+  })
+})
