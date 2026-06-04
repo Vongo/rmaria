@@ -1,9 +1,6 @@
 # Internal utilities vendored from rutils so rmaria has no fragile cross-package
 # build-time dependency. Not exported.
 
-# "not in" operator.
-`%ni%` <- function(a, b) !(a %in% b)
-
 # Best-effort terminal width, degrading gracefully when there is no TTY
 # (e.g. non-interactive sessions, CI). Falls back to $COLUMNS then options(width).
 .term_width <- function() {

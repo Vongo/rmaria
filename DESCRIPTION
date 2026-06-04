@@ -1,6 +1,6 @@
 Package: rmaria
 Title: Utilities to make it easier to connect with MariaDB.
-Version: 0.4.338
+Version: 0.4.339
 Author: person(given = "Adrian",
 	family = "Delmarre",
 	role = c("aut", "cre"),
@@ -10,7 +10,7 @@ Description: Provides utilities to ease the pain of managing MariaDB connections
 License: WTFPL
 Encoding: UTF-8
 Depends: R (>= 4.1.0)
-Imports: logging, magrittr, RMariaDB, DBI, data.table, purrr, bit64
+Imports: logging, RMariaDB, DBI, data.table, purrr, bit64
 Suggests: testthat (>= 3.0.0)
 Config/testthat/edition: 3
 Config/roxygen2/version: 8.0.0
