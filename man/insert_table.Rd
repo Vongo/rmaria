@@ -38,7 +38,7 @@ insert_table(
 
 \item{progress_bar}{nice progress bar to use, it's recommended to disable it in log mode}
 
-\item{ignore}{should we ignore observations that produce errors?}
+\item{ignore}{if TRUE, uses INSERT IGNORE -- silently skips rows that violate duplicate-key/constraint rules; other errors (connection, missing table) still propagate.}
 
 \item{nolog}{avoid any writing to the console (when TRUE, errors are not logged either)}
 

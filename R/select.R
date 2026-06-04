@@ -29,7 +29,6 @@ selectq <- function(query, ...) {
 #' @param keep_int64 if TRUE, keeps int64 columns as-is; if FALSE (default), converts to numeric
 #' @param retries total number of query attempts including the first; default 1 means no retry
 #' @param retry_delay delay in seconds between retry attempts (default: 1)
-#' @import magrittr
 #' @keywords mysql select
 #' @seealso insert_table
 #' @export
@@ -135,13 +134,14 @@ execq <- function(query, ...) {
 
 #' Execute query
 #'
-#' Simple method that executes your query and doesn't return anything.
+#' Simple method that executes your query and returns (invisibly) the number of rows affected.
 #' @param host host
 #' @param port port
 #' @param db default database name
 #' @param user user
 #' @param password password
 #' @param query query to execute
+#' @return (invisibly) the number of rows affected.
 #' @keywords mysql delete create statement
 #' @seealso insert_table
 #' @export

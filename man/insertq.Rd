@@ -20,7 +20,7 @@ Simple method that inserts the input data.frame or data.table into the designate
 It's important to be aware that both input table and table in database should have the same schema (matching names, matching types).
 }
 \examples{
-\dontrun{data <- insertq(host=HOST, db=DB, user=user, password=pwd, query="select * from table;")}
+\dontrun{insertq(iris, "iris_name_in_database")}
 }
 \seealso{
 pull_data, selectq, insert_table

@@ -19,7 +19,7 @@ upsert_table(
 )
 }
 \arguments{
-\item{table}{data.frame or data.table to insert}
+\item{table}{data.frame or data.table to upsert (rows are inserted, or update existing rows when the key already exists).}
 
 \item{table_name_in_base}{table in \code{db} to upsert data into}
 
@@ -42,7 +42,7 @@ upsert_table(
 \item{nolog}{avoid any writing to the console (when TRUE, errors are not logged either)}
 }
 \value{
-(invisibly) MariaDB's affected-row count (inserts count 1, updates count 2 per row).
+(invisibly) MariaDB's affected-row count: 1 per new row inserted, 2 per existing row updated, 0 per existing row left unchanged.
 }
 \description{
 Simple method that inserts the input data.frame or data.table into the designated table, or updates it if the key already exists.

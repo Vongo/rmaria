@@ -5,9 +5,9 @@
 #' @param table_name_in_base table in \code{db} to insert data into
 #' @param preface_queries character vector of queries you want to apply before, typically setting session variables.
 #' @param split_threshold integer, number of rows to split the data into smaller groups. Default is 1e5.
-#' @param use_file logical, if TRUE, uses `load_data_local_infile` flag. Default is FALSE. Careful if you use it, as it does a count(*) on table before and after to check what was integrated.
+#' @param use_file logical; if TRUE, enables the load_data_local_infile flag on the connection (needed for some server configs). Default FALSE.
 #' @keywords MariaDB insert
-#' @details It's important to be aware that both input table and table in database should have the same schema (matching names, matching types). The difference between insertq and insert_table_local is that \code{insertq} uses homemade INSERTS statements, and \code{insert_table_local} uses `load_data_local_infile` flag.
+#' @details It's important that the input table and the database table share the same schema (matching names and types). \code{insertq} uses parameterized, chunked, transactional INSERTs; \code{insert_table_local} uses \code{dbWriteTable} with optional load_data_local_infile support (bulk load, no transactional batching or duplicate-key control).
 #' @seealso pull_data, selectq, insert_table, insertq
 #' @export
 #' @examples
@@ -65,7 +65,7 @@ insert_source_full_file <- function(src, host="localhost", port=3306, db, user, 
 #' @seealso pull_data, selectq, insert_table
 #' @export
 #' @examples
-#' \dontrun{data <- insertq(host=HOST, db=DB, user=user, password=pwd, query="select * from table;")}
+#' \dontrun{insertq(iris, "iris_name_in_database")}
 insertq <- function(table, table_name_in_base, ...) {
   creds <- resolve_credentials()
   insert_table(table = table, table_name_in_base = table_name_in_base,
@@ -84,7 +84,7 @@ insertq <- function(table, table_name_in_base, ...) {
 #' @param table_name_in_base table in \code{db} to insert data into
 #' @param chunk_size how many elements should be inserted at a time
 #' @param progress_bar nice progress bar to use, it's recommended to disable it in log mode
-#' @param ignore should we ignore observations that produce errors?
+#' @param ignore if TRUE, uses INSERT IGNORE -- silently skips rows that violate duplicate-key/constraint rules; other errors (connection, missing table) still propagate.
 #' @param nolog avoid any writing to the console (when TRUE, errors are not logged either)
 #' @param allow.backslash deprecated and ignored; backslashes are now escaped correctly by DBI
 #' @return (invisibly) the number of rows affected (with ignore=TRUE, skipped duplicate rows are not counted).

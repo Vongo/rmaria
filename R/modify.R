@@ -27,13 +27,13 @@ upsertq <- function(table, table_name_in_base, ...) {
 #' @param db default database name
 #' @param user user
 #' @param password password
-#' @param table data.frame or data.table to insert
+#' @param table data.frame or data.table to upsert (rows are inserted, or update existing rows when the key already exists).
 #' @param table_name_in_base table in \code{db} to upsert data into
 #' @param keycols character vector naming the key column(s) used to identify rows (excluded from the SET/UPDATE clause)
 #' @param chunk_size how many rows to send per batched statement (default 10000)
 #' @param progress_bar nice progress bar to use, it's recommended to disable it in log mode
 #' @param nolog avoid any writing to the console (when TRUE, errors are not logged either)
-#' @return (invisibly) MariaDB's affected-row count (inserts count 1, updates count 2 per row).
+#' @return (invisibly) MariaDB's affected-row count: 1 per new row inserted, 2 per existing row updated, 0 per existing row left unchanged.
 #' @keywords mysql insert
 #' @details It's important to be aware that both input table and table in database should have the same schema (matching names, matching types).
 #' @seealso pull_data, selectq, insertq
@@ -45,7 +45,7 @@ upsert_table <- function(table, table_name_in_base, keycols, host="localhost", p
 ) {
   table <- as.data.frame(table)
   if (nrow(table) == 0L) {
-    if (!nolog) logging::logwarn("You tried to insert an empty table. Leaving.", logger=LOGGER.MAIN)
+    if (!nolog) logging::logwarn("You tried to upsert an empty table. Leaving.", logger=LOGGER.MAIN)
     return(invisible(0L))
   }
   if (missing(keycols) || length(keycols) == 0L) stop("upsert_table: 'keycols' must name the key column(s)")
@@ -118,7 +118,7 @@ updateq <- function(table, table_name_in_base, ...) {
 #' @return (invisibly) the number of rows changed.
 #' @keywords mysql update
 #' @details It's important to be aware that both input table and table in database should have the same schema (matching names, matching types).
-#' @details Input rows must be unique on \code{keycols}; duplicate keys within the batch resolve non-deterministically (this is a JOIN-based bulk update, not row-by-row).
+#' @details Input rows must be unique on \code{keycols} across the entire input; duplicate keys resolve non-deterministically (all chunks load into one temporary table before the JOIN update).
 #' @seealso pull_data, selectq, insertq
 #' @export
 #' @examples

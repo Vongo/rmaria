@@ -54,7 +54,7 @@ existing row so those rows are silently ignored.
 \details{
 It's important to be aware that both input table and table in database should have the same schema (matching names, matching types).
 
-Input rows must be unique on \code{keycols}; duplicate keys within the batch resolve non-deterministically (this is a JOIN-based bulk update, not row-by-row).
+Input rows must be unique on \code{keycols} across the entire input; duplicate keys resolve non-deterministically (all chunks load into one temporary table before the JOIN update).
 }
 \examples{
 \dontrun{update_table(my_data, "table_name", keycols=c("id"), host=HOST, db=DB, user=USER, password=PWD)}

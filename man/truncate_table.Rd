@@ -14,7 +14,7 @@ truncate_table(
 )
 }
 \arguments{
-\item{table_name_in_base}{table in \code{db} to insert data into}
+\item{table_name_in_base}{table in \code{db} to truncate}
 
 \item{host}{host}
 
@@ -30,7 +30,7 @@ truncate_table(
 Empties table from all observations, but doesn't delete it.
 }
 \examples{
-\dontrun{truncate_table(table="foo", host=HOST, db=DB, user=USER, password=PWD)}
+\dontrun{truncate_table(table_name_in_base="foo", host=HOST, db=DB, user=USER, password=PWD)}
 }
 \keyword{delete}
 \keyword{mysql}

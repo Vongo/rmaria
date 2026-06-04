@@ -21,13 +21,13 @@ insert_table_local(
 
 \item{split_threshold}{integer, number of rows to split the data into smaller groups. Default is 1e5.}
 
-\item{use_file}{logical, if TRUE, uses `load_data_local_infile` flag. Default is FALSE. Careful if you use it, as it does a count(*) on table before and after to check what was integrated.}
+\item{use_file}{logical; if TRUE, enables the load_data_local_infile flag on the connection (needed for some server configs). Default FALSE.}
 }
 \description{
 Simple method that inserts the input data.frame or data.table into the designated table in the current DB context.
 }
 \details{
-It's important to be aware that both input table and table in database should have the same schema (matching names, matching types). The difference between insertq and insert_table_local is that \code{insertq} uses homemade INSERTS statements, and \code{insert_table_local} uses `load_data_local_infile` flag.
+It's important that the input table and the database table share the same schema (matching names and types). \code{insertq} uses parameterized, chunked, transactional INSERTs; \code{insert_table_local} uses \code{dbWriteTable} with optional load_data_local_infile support (bulk load, no transactional batching or duplicate-key control).
 }
 \examples{
 \dontrun{

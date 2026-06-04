@@ -42,7 +42,7 @@ deleteq <- function(table_name_in_base, where, ...) {
 #' Truncate table
 #'
 #' Empties table from all observations, but doesn't delete it.
-#' @param table_name_in_base table in \code{db} to insert data into
+#' @param table_name_in_base table in \code{db} to truncate
 #' @param host host
 #' @param port port
 #' @param db default database name
@@ -51,7 +51,7 @@ deleteq <- function(table_name_in_base, where, ...) {
 #' @keywords mysql delete
 #' @export
 #' @examples
-#' \dontrun{truncate_table(table="foo", host=HOST, db=DB, user=USER, password=PWD)}
+#' \dontrun{truncate_table(table_name_in_base="foo", host=HOST, db=DB, user=USER, password=PWD)}
 truncate_table <- function(table_name_in_base, host="localhost", port=3306, db, user, password) {
   logging::loginfo("Truncating table %s.", table_name_in_base, logger=LOGGER.MAIN)
   con <- .maria_connect(host, port, db, user, password)
