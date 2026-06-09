@@ -14,7 +14,8 @@ pull_data(
   verbose = TRUE,
   keep_int64 = FALSE,
   retries = 1,
-  retry_delay = 1
+  retry_delay = 1,
+  on_nul = c("decode", "error", "strip")
 )
 }
 \arguments{
@@ -37,9 +38,19 @@ pull_data(
 \item{retries}{total number of query attempts including the first; default 1 means no retry}
 
 \item{retry_delay}{delay in seconds between retry attempts (default: 1)}
+
+\item{on_nul}{behavior when a text column contains embedded NUL bytes (UTF-16 data): "decode" (default) transparently re-fetches and decodes to UTF-8, "strip" removes NUL bytes, "error" stops with an actionable message. Auto-recovery wraps the query as a derived table, so it may not apply to SELECT * joins with duplicate column names, multi-statement, or line-commented queries; those surface the actionable error instead.}
 }
 \description{
 Simple method that executes your select query and returns its results in a data.table.
+}
+\details{
+On the "embedded nul in string" error, `on_nul="decode"`/`"strip"` recover by
+  re-fetching the affected text columns as BINARY and decoding UTF-16->UTF-8 (BOM-aware;
+  BOM-less data is assumed little-endian, so BOM-less UTF-16BE would mis-decode). A warning
+  always lists the recovered column(s). In `on_nul="error"` mode, or when recovery cannot
+  proceed, a condition of class `rmaria_embedded_nul` is raised -- catch it with
+  `tryCatch(..., rmaria_embedded_nul = function(e) ...)`.
 }
 \examples{
 \dontrun{data <- pull_data(host=HOST, db=DB, user=user, password=pwd, query="select * from table;")}

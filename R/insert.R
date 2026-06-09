@@ -18,6 +18,7 @@
 insert_table_local <- function(table, table_name_in_base, preface_queries=character(0), split_threshold=1e5, use_file=FALSE) {
   creds <- resolve_credentials()
   table <- as.data.frame(table)
+  table <- normalize_table_utf8(table)
   con <- NULL
   tryCatch({
     con <- .maria_connect(creds$host, creds$port, creds$db, creds$user, creds$pwd, local_infile = use_file)
@@ -102,6 +103,7 @@ insert_table <- function(table, table_name_in_base, host="localhost", port=3306,
     return(invisible(0L))
   }
   if (!nolog) logging::loginfo("Inserting data into table %s.", table_name_in_base, logger=LOGGER.MAIN)
+  table <- normalize_table_utf8(table, nolog=nolog)
   table[] <- lapply(table, function(col) {
     if (is.factor(col)) col <- as.character(col)
     if (is.numeric(col)) col[!is.finite(col)] <- NA   # NA/NaN/Inf -> NULL

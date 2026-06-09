@@ -52,6 +52,7 @@ upsert_table <- function(table, table_name_in_base, keycols, host="localhost", p
   unknown <- setdiff(keycols, colnames(table))
   if (length(unknown) > 0L) stop("upsert_table: keycols not found in table: ", paste(unknown, collapse = ", "))
   if (!nolog) logging::loginfo("Upserting %s rows data into table %s.", nrow(table), table_name_in_base, logger=LOGGER.MAIN)
+  table <- normalize_table_utf8(table, nolog=nolog)
   table[] <- lapply(table, function(col) { if (is.factor(col)) col <- as.character(col); if (is.numeric(col)) col[!is.finite(col)] <- NA; col })
   cols <- colnames(table)
   sql  <- build_upsert_sql(table_name_in_base, cols, keycols)
@@ -140,6 +141,7 @@ update_table <- function(table, table_name_in_base, keycols, host="localhost", p
     return(invisible(0L))
   }
   if (!nolog) logging::loginfo("Updating %s rows data into table %s.", nrow(table), table_name_in_base, logger=LOGGER.MAIN)
+  table <- normalize_table_utf8(table, nolog=nolog)
   table[] <- lapply(table, function(col) { if (is.factor(col)) col <- as.character(col); if (is.numeric(col)) col[!is.finite(col)] <- NA; col })
   if (is.na(chunk_size)) chunk_size <- 10000L
   chunk_size <- as.integer(max(1L, min(chunk_size, nrow(table))))
