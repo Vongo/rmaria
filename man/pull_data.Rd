@@ -14,7 +14,8 @@ pull_data(
   verbose = TRUE,
   keep_int64 = FALSE,
   retries = 1,
-  retry_delay = 1
+  retry_delay = 1,
+  on_nul = c("decode", "error", "strip")
 )
 }
 \arguments{
@@ -37,6 +38,8 @@ pull_data(
 \item{retries}{total number of query attempts including the first; default 1 means no retry}
 
 \item{retry_delay}{delay in seconds between retry attempts (default: 1)}
+
+\item{on_nul}{behavior when a text column contains embedded NUL bytes (UTF-16 data): "decode" (default) transparently re-fetches and decodes to UTF-8, "strip" removes NUL bytes, "error" stops with an actionable message. Auto-recovery wraps the query as a derived table, so it may not apply to SELECT * joins with duplicate column names, multi-statement, or line-commented queries; those surface the actionable error instead.}
 }
 \description{
 Simple method that executes your select query and returns its results in a data.table.

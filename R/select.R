@@ -29,12 +29,13 @@ selectq <- function(query, ...) {
 #' @param keep_int64 if TRUE, keeps int64 columns as-is; if FALSE (default), converts to numeric
 #' @param retries total number of query attempts including the first; default 1 means no retry
 #' @param retry_delay delay in seconds between retry attempts (default: 1)
+#' @param on_nul behavior when a text column contains embedded NUL bytes (UTF-16 data): "decode" (default) transparently re-fetches and decodes to UTF-8, "strip" removes NUL bytes, "error" stops with an actionable message. Auto-recovery wraps the query as a derived table, so it may not apply to SELECT * joins with duplicate column names, multi-statement, or line-commented queries; those surface the actionable error instead.
 #' @keywords mysql select
 #' @seealso insert_table
 #' @export
 #' @examples
 #' \dontrun{data <- pull_data(host=HOST, db=DB, user=user, password=pwd, query="select * from table;")}
-pull_data <- function(host="localhost", port=3306, db, user, password, query, verbose=TRUE, keep_int64=FALSE, retries=1, retry_delay=1) {
+pull_data <- function(host="localhost", port=3306, db, user, password, query, verbose=TRUE, keep_int64=FALSE, retries=1, retry_delay=1, on_nul=c("decode", "error", "strip")) {
 	# Input validation
 	if (missing(query) || is.null(query) || !is.character(query) || nchar(trimws(query)) == 0) {
 		stop("pull_data: 'query' must be a non-empty character string")
@@ -48,6 +49,8 @@ pull_data <- function(host="localhost", port=3306, db, user, password, query, ve
 	if (missing(password) || is.null(password) || !is.character(password)) {
 		stop("pull_data: 'password' must be a character string")
 	}
+
+	on_nul <- match.arg(on_nul)
 
 	if (verbose) {
 		logging::logfinest("Fetching data with query: \n\t%s.", query, logger=LOGGER.MAIN)
@@ -65,7 +68,7 @@ pull_data <- function(host="localhost", port=3306, db, user, password, query, ve
 		result <- tryCatch({
 			con <- RMariaDB::dbConnect(RMariaDB::MariaDB(), user=user, password=password, dbname=db, host=host, port=port)
 			RMariaDB::dbExecute(con, "SET NAMES utf8mb4")
-			state$data <- RMariaDB::dbGetQuery(con, query)
+			state$data <- dbGetQuery_nul_safe(con, query, on_nul=on_nul, verbose=verbose)
 			TRUE
 		}, error=function(e) {
 			state$last_error <- e
@@ -88,6 +91,10 @@ pull_data <- function(host="localhost", port=3306, db, user, password, query, ve
 			break
 		}
 
+		if (inherits(state$last_error, "rmaria_embedded_nul")) {
+			break   # deterministic: retrying will not help
+		}
+
 		if (attempt < retries) {
 			Sys.sleep(retry_delay)
 		}
@@ -95,8 +102,8 @@ pull_data <- function(host="localhost", port=3306, db, user, password, query, ve
 
 	if (is.null(state$data)) {
 		error_msg <- if (!is.null(state$last_error)) conditionMessage(state$last_error) else "Unknown error"
-		logging::logerror("Error while fetching data with query [%s] after %d attempts:\n[%s]", query, retries, error_msg, logger=LOGGER.MAIN)
-		stop(sprintf("pull_data failed after %d attempts: %s", retries, error_msg))
+		logging::logerror("Error while fetching data with query [%s] after %d attempts:\n[%s]", query, attempt, error_msg, logger=LOGGER.MAIN)
+		stop(sprintf("pull_data failed after %d attempts: %s", attempt, error_msg))
 	}
 
 	if (verbose) {
