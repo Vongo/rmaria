@@ -91,14 +91,17 @@ decode_dbi_bytes <- function(raw, mode = c("decode", "strip")) {
 # Read side: recovery query construction
 # ---------------------------------------------------------------------------
 
-# Build a recovery query that re-fetches character columns as BINARY (NUL-safe).
+# DBI column types that denote text. RMariaDB's dbColumnInfo()$type reports text
+# columns as "string"; DBI-generic backends may report "character". Recovery casts
+# exactly these columns to BINARY so embedded NUL bytes survive the fetch.
+.rmaria_text_types <- c("string", "character")
+
+# Build a recovery query that re-fetches text columns as BINARY (NUL-safe).
 #
-# Wraps the original query as a derived table; CASTs each character-typed column
-# to BINARY and passes other columns through unchanged. Column order is preserved
-# and names are backtick-quoted. `colinfo` is a data.frame with `name` and `type`
-# columns (as returned by DBI::dbColumnInfo); `type == "character"` marks text.
-#
-# Recovery relies on RMariaDB::dbColumnInfo()$type == "character" identifying text columns.
+# Wraps the original query as a derived table; CASTs each text column (per
+# `.rmaria_text_types`) to BINARY and passes other columns through unchanged.
+# Column order is preserved and names are backtick-quoted. `colinfo` is a
+# data.frame with `name` and `type` columns (as returned by DBI::dbColumnInfo).
 #
 # Note: the outer SELECT ... FROM (<query>) AS rmaria_sub has no ORDER BY, so row order
 # relies on MariaDB preserving the derived-table order (true in practice; inner
@@ -109,7 +112,7 @@ build_recovery_query <- function(query, colinfo) {
 	bq <- function(nm) paste0("`", gsub("`", "``", nm), "`")
 	cols <- vapply(seq_len(nrow(colinfo)), function(i) {
 		nm <- colinfo$name[i]
-		if (identical(colinfo$type[i], "character")) {
+		if (colinfo$type[i] %in% .rmaria_text_types) {
 			paste0("CAST(", bq(nm), " AS BINARY) AS ", bq(nm))
 		} else {
 			bq(nm)
@@ -131,22 +134,21 @@ rmaria_nul_error <- function(message) {
 	)
 }
 
-# Return the names of character-typed columns for a query, without fetching rows
-# (so it does not trigger the embedded-NUL error). Returns character(0) on failure.
-# Recovery relies on RMariaDB::dbColumnInfo()$type == "character" identifying text columns.
+# Return the names of text columns for a query, without fetching rows (so it does
+# not trigger the embedded-NUL error). Returns character(0) on failure.
 fetch_candidate_text_columns <- function(con, query) {
 	tryCatch({
 		res <- RMariaDB::dbSendQuery(con, query)
 		on.exit(RMariaDB::dbClearResult(res), add = TRUE)
 		ci <- RMariaDB::dbColumnInfo(res)
-		ci$name[ci$type == "character"]
+		ci$name[ci$type %in% .rmaria_text_types]
 	}, error = function(.) character(0))
 }
 
 # Re-fetch a query that hit an embedded-NUL column, decoding text to UTF-8.
-# Runs on an open connection. Returns a data.frame with an attribute
-# "rmaria_nul_columns" naming the columns that contained NUL bytes.
-# Recovery relies on RMariaDB::dbColumnInfo()$type == "character" identifying text columns.
+# Runs on an open connection; clears its own result handle and leaves `con` open
+# for the caller. Returns a data.frame with an attribute "rmaria_nul_columns"
+# naming the columns that contained NUL bytes.
 recover_nul_fetch <- function(con, query, mode = c("decode", "strip")) {
 	mode <- match.arg(mode)
 	res <- RMariaDB::dbSendQuery(con, query)
@@ -158,7 +160,7 @@ recover_nul_fetch <- function(con, query, mode = c("decode", "strip")) {
 	recovery_query <- build_recovery_query(query, colinfo)
 	raw_df <- RMariaDB::dbGetQuery(con, recovery_query)
 
-	text_cols <- colinfo$name[colinfo$type == "character"]
+	text_cols <- colinfo$name[colinfo$type %in% .rmaria_text_types]
 	decode_recovery_columns(raw_df, text_cols, mode = mode)
 }
 

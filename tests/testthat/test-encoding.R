@@ -69,10 +69,11 @@ test_that("decode_dbi_bytes strip mode handles a BE BOM", {
   expect_equal(rmaria:::decode_dbi_bytes(bytes, mode = "strip"), "ab")
 })
 
-test_that("build_recovery_query casts only character columns and strips trailing ;", {
+test_that("build_recovery_query casts only text columns and strips trailing ;", {
+  # RMariaDB reports text columns as type "string"; "character" is also accepted.
   colinfo <- data.frame(
     name = c("id", "value", "field"),
-    type = c("integer", "character", "character"),
+    type = c("integer", "string", "character"),
     stringsAsFactors = FALSE
   )
   out <- rmaria:::build_recovery_query("select id, value, field from t ;", colinfo)
@@ -85,7 +86,7 @@ test_that("build_recovery_query casts only character columns and strips trailing
 test_that("build_recovery_query preserves column order and quotes names", {
   colinfo <- data.frame(
     name = c("value", "n"),
-    type = c("character", "double"),
+    type = c("string", "double"),
     stringsAsFactors = FALSE
   )
   out <- rmaria:::build_recovery_query("select * from t", colinfo)

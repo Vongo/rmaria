@@ -36,7 +36,7 @@ test_that("dbGetQuery_nul_safe decode-mode: recovers NUL column and balances dbS
     dbColumnInfo = function(res, ...) {
       data.frame(
         name = c("id", "value"),
-        type = c("integer", "character"),
+        type = c("integer", "string"),
         stringsAsFactors = FALSE
       )
     },
@@ -71,7 +71,7 @@ test_that("dbGetQuery_nul_safe error-mode: raises rmaria_embedded_nul condition"
       dbColumnInfo = function(res, ...) {
         data.frame(
           name = c("id", "value"),
-          type = c("integer", "character"),
+          type = c("integer", "string"),
           stringsAsFactors = FALSE
         )
       },
@@ -111,7 +111,7 @@ test_that("dbGetQuery_nul_safe strip-mode removes NUL bytes via the orchestrator
       } else stop("embedded nul in string: 'x'")
     },
     dbSendQuery  = function(conn, statement, ...) structure(list(), class = "MockResult"),
-    dbColumnInfo = function(res, ...) data.frame(name = c("id", "value"), type = c("integer", "character"), stringsAsFactors = FALSE),
+    dbColumnInfo = function(res, ...) data.frame(name = c("id", "value"), type = c("integer", "string"), stringsAsFactors = FALSE),
     dbClearResult = function(res, ...) invisible(TRUE),
     .package = "RMariaDB",
     rmaria:::dbGetQuery_nul_safe(con, "SELECT id, value FROM t", on_nul = "strip")
@@ -128,7 +128,7 @@ test_that("dbGetQuery_nul_safe raises a classed error when recovery itself fails
         else stop("embedded nul in string: 'x'")
       },
       dbSendQuery  = function(conn, statement, ...) structure(list(), class = "MockResult"),
-      dbColumnInfo = function(res, ...) data.frame(name = c("id", "value"), type = c("integer", "character"), stringsAsFactors = FALSE),
+      dbColumnInfo = function(res, ...) data.frame(name = c("id", "value"), type = c("integer", "string"), stringsAsFactors = FALSE),
       dbClearResult = function(res, ...) invisible(TRUE),
       .package = "RMariaDB",
       rmaria:::dbGetQuery_nul_safe(con, "SELECT id, value FROM t", on_nul = "decode")

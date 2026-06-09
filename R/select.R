@@ -109,6 +109,11 @@ pull_data <- function(host="localhost", port=3306, db, user, password, query, ve
 	if (is.null(state$data)) {
 		error_msg <- if (!is.null(state$last_error)) conditionMessage(state$last_error) else "Unknown error"
 		logging::logerror("Error while fetching data with query [%s] after %d attempts:\n[%s]", query, attempt, error_msg, logger=LOGGER.MAIN)
+		# Preserve the classed, actionable embedded-NUL condition so callers can
+		# catch it with tryCatch(..., rmaria_embedded_nul = ...).
+		if (inherits(state$last_error, "rmaria_embedded_nul")) {
+			stop(state$last_error)
+		}
 		stop(sprintf("pull_data failed after %d attempts: %s", attempt, error_msg))
 	}
 

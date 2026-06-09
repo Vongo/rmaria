@@ -3,12 +3,14 @@
 # Uses the shared helpers in helper-db.R (db_env / test_con / with_test_table /
 # skip_if_no_db). Skipped unless RMARIA_TEST_HOST is set. A real (non-TEMPORARY)
 # table is used on purpose: pull_data opens its own connection, so it must be able
-# to see the table created here.
+# to see the table created here. The text column is declared CHARACTER SET latin1
+# so the raw UTF-16 bytes can be inserted (a utf8mb4 column rejects them under
+# strict mode); the recovery CASTs the column back to BINARY regardless of charset.
 
 test_that("pull_data auto-recovers a UTF-16 row (on_nul='decode')", {
   e <- db_env()
   with_test_table(
-    "CREATE TABLE rmaria_nul_test (id INT, value TEXT)",
+    "CREATE TABLE rmaria_nul_test (id INT, value TEXT CHARACTER SET latin1)",
     "rmaria_nul_test",
     {
       con <- test_con()
@@ -30,7 +32,7 @@ test_that("pull_data auto-recovers a UTF-16 row (on_nul='decode')", {
 test_that("pull_data with on_nul='error' raises a classed, actionable error", {
   e <- db_env()
   with_test_table(
-    "CREATE TABLE rmaria_nul_test2 (id INT, value TEXT)",
+    "CREATE TABLE rmaria_nul_test2 (id INT, value TEXT CHARACTER SET latin1)",
     "rmaria_nul_test2",
     {
       con <- test_con()
