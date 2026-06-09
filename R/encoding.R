@@ -76,8 +76,9 @@ decode_dbi_bytes <- function(raw, mode = c("decode", "strip")) {
 		out <- safe_iconv(raw[-(1:2)], "UTF-16BE")
 		if (!is.na(out)) return(out)
 	}
-	# Defensive fallback: only reached for BOM-less NUL data, or if a BOM iconv
-	# returned NA above (rare, since safe_iconv uses sub="" and rarely fails).
+	# has_nul: BOM-less NUL bytes (assume UTF-16LE), or a BOM whose iconv returned
+	# NA above (then the BOM bytes are re-decoded as part of raw). Falling through
+	# past this block means no NUL and no BOM: plain UTF-8.
 	if (has_nul) {
 		out <- safe_iconv(raw, "UTF-16LE")
 		if (!is.na(out)) return(out)
@@ -162,7 +163,7 @@ recover_nul_fetch <- function(con, query, mode = c("decode", "strip")) {
 }
 
 # Fetch a query, transparently recovering from embedded-NUL columns per `on_nul`.
-dbGetQuery_nul_safe <- function(con, query, on_nul = c("decode", "error", "strip"), verbose = TRUE) {
+dbGetQuery_nul_safe <- function(con, query, on_nul = c("decode", "error", "strip")) {
 	on_nul <- match.arg(on_nul)
 	tryCatch(
 		RMariaDB::dbGetQuery(con, query),
@@ -183,9 +184,9 @@ dbGetQuery_nul_safe <- function(con, query, on_nul = c("decode", "error", "strip
 			)
 			cols <- attr(recovered, "rmaria_nul_columns")
 			attr(recovered, "rmaria_nul_columns") <- NULL
-			if (verbose && length(cols) > 0L) {
+			if (length(cols) > 0L) {
 				logging::logwarn(
-					"Recovered embedded-NUL column(s) [%s] using on_nul=\"%s\".",
+					"pull_data: column(s) [%s] contained embedded NUL bytes; recovered via on_nul=\"%s\" (best-effort for non-UTF-16 / BOM-less data -- verify output, or re-run with on_nul=\"error\").",
 					paste(cols, collapse = ", "), on_nul, logger = LOGGER.MAIN
 				)
 			}
@@ -257,8 +258,9 @@ decode_recovery_columns <- function(raw_df, text_cols, mode = c("decode", "strip
 			had <- vapply(col, function(b) is.raw(b) && any(b == as.raw(0x00)), logical(1))
 			raw_df[[nm]] <- vapply(col, decode_dbi_bytes, character(1), mode = mode)
 		} else if (is.raw(col)) {
-			had <- any(col == as.raw(0x00))
-			raw_df[[nm]] <- decode_dbi_bytes(col, mode = mode)
+			# A bare raw column in a data.frame holds one byte per row.
+			had <- col == as.raw(0x00)
+			raw_df[[nm]] <- vapply(col, function(b) decode_dbi_bytes(as.raw(b), mode = mode), character(1))
 		} else {
 			had <- FALSE
 		}

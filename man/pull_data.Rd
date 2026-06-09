@@ -44,6 +44,14 @@ pull_data(
 \description{
 Simple method that executes your select query and returns its results in a data.table.
 }
+\details{
+On the "embedded nul in string" error, `on_nul="decode"`/`"strip"` recover by
+  re-fetching the affected text columns as BINARY and decoding UTF-16->UTF-8 (BOM-aware;
+  BOM-less data is assumed little-endian, so BOM-less UTF-16BE would mis-decode). A warning
+  always lists the recovered column(s). In `on_nul="error"` mode, or when recovery cannot
+  proceed, a condition of class `rmaria_embedded_nul` is raised -- catch it with
+  `tryCatch(..., rmaria_embedded_nul = function(e) ...)`.
+}
 \examples{
 \dontrun{data <- pull_data(host=HOST, db=DB, user=user, password=pwd, query="select * from table;")}
 }

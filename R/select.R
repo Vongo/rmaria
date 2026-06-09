@@ -30,6 +30,12 @@ selectq <- function(query, ...) {
 #' @param retries total number of query attempts including the first; default 1 means no retry
 #' @param retry_delay delay in seconds between retry attempts (default: 1)
 #' @param on_nul behavior when a text column contains embedded NUL bytes (UTF-16 data): "decode" (default) transparently re-fetches and decodes to UTF-8, "strip" removes NUL bytes, "error" stops with an actionable message. Auto-recovery wraps the query as a derived table, so it may not apply to SELECT * joins with duplicate column names, multi-statement, or line-commented queries; those surface the actionable error instead.
+#' @details On the "embedded nul in string" error, `on_nul="decode"`/`"strip"` recover by
+#'   re-fetching the affected text columns as BINARY and decoding UTF-16->UTF-8 (BOM-aware;
+#'   BOM-less data is assumed little-endian, so BOM-less UTF-16BE would mis-decode). A warning
+#'   always lists the recovered column(s). In `on_nul="error"` mode, or when recovery cannot
+#'   proceed, a condition of class `rmaria_embedded_nul` is raised -- catch it with
+#'   `tryCatch(..., rmaria_embedded_nul = function(e) ...)`.
 #' @keywords mysql select
 #' @seealso insert_table
 #' @export
@@ -68,7 +74,7 @@ pull_data <- function(host="localhost", port=3306, db, user, password, query, ve
 		result <- tryCatch({
 			con <- RMariaDB::dbConnect(RMariaDB::MariaDB(), user=user, password=password, dbname=db, host=host, port=port)
 			RMariaDB::dbExecute(con, "SET NAMES utf8mb4")
-			state$data <- dbGetQuery_nul_safe(con, query, on_nul=on_nul, verbose=verbose)
+			state$data <- dbGetQuery_nul_safe(con, query, on_nul=on_nul)
 			TRUE
 		}, error=function(e) {
 			state$last_error <- e

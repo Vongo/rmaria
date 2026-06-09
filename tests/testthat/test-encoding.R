@@ -192,3 +192,20 @@ test_that("decode_recovery_columns preserves SQL NULL cells as NA", {
   expect_equal(out$value, c("premiere pro\r", NA_character_))
   expect_equal(attr(out, "rmaria_nul_columns"), "value")  # flagged by the real-NUL 1st cell only
 })
+
+test_that("decode_recovery_columns decodes a multi-row bare-raw column per row", {
+  raw_df <- data.frame(id = 1:2, stringsAsFactors = FALSE)
+  raw_df$value <- as.raw(c(0x68, 0x69))   # bare raw, one byte per row: "h","i"
+  out <- rmaria:::decode_recovery_columns(raw_df, text_cols = "value", mode = "decode")
+  expect_equal(out$value, c("h", "i"))
+})
+
+test_that("normalize_table_utf8 works on a data.table and preserves class", {
+  skip_if_not_installed("data.table")
+  x <- "caf\xe9"; Encoding(x) <- "latin1"
+  dt <- data.table::data.table(id = 1L, value = x)
+  out <- rmaria:::normalize_table_utf8(dt, nolog = TRUE)
+  expect_true(data.table::is.data.table(out))
+  expect_equal(out$value, "café")
+  expect_equal(Encoding(out$value), "UTF-8")
+})

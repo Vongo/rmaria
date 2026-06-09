@@ -46,3 +46,21 @@ test_that("pull_data with on_nul='error' raises a classed, actionable error", {
     }
   )
 })
+
+test_that("insert_table normalizes a latin1 column to UTF-8 (round-trip)", {
+  e <- db_env()
+  with_test_table(
+    "CREATE TABLE rmaria_enc_test (id INT, name VARCHAR(64)) CHARACTER SET utf8mb4",
+    "rmaria_enc_test",
+    {
+      x <- "caf\xe9"; Encoding(x) <- "latin1"
+      df <- data.frame(id = 1L, name = x, stringsAsFactors = FALSE)
+      insert_table(df, "rmaria_enc_test", host = e$host, port = e$port, db = e$db,
+                   user = e$user, password = e$pwd, progress_bar = FALSE, nolog = TRUE)
+      out <- pull_data(host = e$host, port = e$port, db = e$db, user = e$user, password = e$pwd,
+                       query = "SELECT name FROM rmaria_enc_test", verbose = FALSE)
+      expect_equal(out$name[1], "café")
+      expect_equal(Encoding(out$name[1]), "UTF-8")
+    }
+  )
+})
