@@ -26,10 +26,19 @@ test_that("non-scalar or NA input is returned as-is rather than erroring", {
   expect_identical(rmaria:::.truncate_query_for_log(character(0)), character(0))
 })
 
+test_that("the default cap keeps a huge query near .LOG_QUERY_MAX_CHARS", {
+  # Every other test passes max_chars= explicitly, so this is the only pin on
+  # the default constant itself: drift to a larger value stays visible here.
+  out <- rmaria:::.truncate_query_for_log(strrep("k", 1000000L))
+  expect_lt(nchar(out), 2100L)
+  expect_match(out, "truncated, 1000000 chars total", fixed = TRUE)
+})
+
 test_that("an invalid multibyte string degrades to a marker, never an error", {
   # nchar() and substr() both throw on a string whose declared encoding does
-  # not match its bytes; the helper must swallow that and still not emit the
-  # (potentially huge) raw query.
+  # not match its bytes. pull_data's own validation rejects such input before
+  # any logging happens, so this pins a helper-level guarantee only: swallow
+  # the throw, emit a bounded marker, never the raw query.
   bad <- rawToChar(as.raw(c(0x63, 0x61, 0x66, 0xe9)))   # latin1 bytes...
   Encoding(bad) <- "UTF-8"                               # ...declared UTF-8
   out <- NULL
@@ -54,6 +63,13 @@ test_that("pull_data failure log lines stay bounded for a multi-megabyte query",
   }
   logging::addHandler(capture_action, level = "FINEST", logger = "com.vongo.rmaria")
   on.exit(logging::removeHandler("capture_action", logger = "com.vongo.rmaria"), add = TRUE)
+  # The logger itself defaults to INFO, which would filter FINEST records
+  # before they reach the handler -- and silently exempt the verbose
+  # fetch-trace call site from this test. Lower it so all three truncated
+  # sites are exercised.
+  old_level <- logging::getLogger("com.vongo.rmaria")$level
+  logging::setLevel("FINEST", "com.vongo.rmaria")
+  on.exit(logging::setLevel(old_level, "com.vongo.rmaria"), add = TRUE)
 
   # Port 1 on localhost: the connection is refused, so both the per-attempt
   # warning and the final error log fire without needing a database.

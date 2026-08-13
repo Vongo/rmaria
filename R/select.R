@@ -19,22 +19,26 @@ selectq <- function(query, ...) {
 # Longest query text a single log line may carry. IN-list queries built from
 # millions of ids reach tens of megabytes, and logging one whole -- once per
 # failed attempt plus once in the final error -- turned a transient DB outage
-# into multi-gigabyte daily log files. 2000 chars identifies any query; the
-# suffix states how much was cut.
+# into multi-gigabyte daily log files. The kept head is what identifies a
+# query; the suffix states how much was cut.
 .LOG_QUERY_MAX_CHARS <- 2000L
 
 # Never throws: it runs on the failure-logging path, where an error here would
 # mask the real one being reported. Anything but a single non-NA string is
-# returned untouched, and inputs nchar()/substr() choke on (invalid multibyte
-# strings) degrade to a fixed marker rather than an error -- or worse, the
-# untruncated query.
+# returned untouched, and inputs that nchar()/substr() choke on (invalid
+# multibyte strings) degrade to a marker carrying the reason and the byte
+# count -- never an error, and never the untruncated query.
 .truncate_query_for_log <- function(query, max_chars = .LOG_QUERY_MAX_CHARS) {
 	tryCatch({
 		if (!is.character(query) || length(query) != 1L || is.na(query)) return(query)
 		n <- nchar(query)
 		if (n <= max_chars) return(query)
 		sprintf("%s... [truncated, %d chars total]", substr(query, 1L, max_chars), n)
-	}, error = function(e) "<query not shown: invalid encoding>")
+	}, error = function(e) {
+		# query is guaranteed scalar character here (the guard returned earlier
+		# otherwise), and nchar(type="bytes") never throws, so this stays safe.
+		sprintf("<query not shown (%s): %d bytes>", conditionMessage(e), nchar(query, type = "bytes"))
+	})
 }
 
 
