@@ -83,21 +83,25 @@ upsert_table <- function(table, table_name_in_base, keycols, host="localhost", p
   # column count, the row width or the server's packet limit -- so sub-split rather than fail.
   con <- .maria_connect(host, port, db, user, password)
   on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
-  stmt_rows <- upsert_batch_rows(table, chunk_size, con = con, nolog = nolog)
-  n_iter <- as.integer(ceiling(nrow(table) / stmt_rows))
-  sql_full <- build_upsert_sql(table_name_in_base, cols, keycols, n_rows = stmt_rows)
-  tail_rows <- nrow(table) - (n_iter - 1L) * stmt_rows
-  sql_tail <- if (tail_rows == stmt_rows) sql_full else
-    build_upsert_sql(table_name_in_base, cols, keycols, n_rows = tail_rows)
+  batches <- upsert_batches(table, chunk_size, con = con, nolog = nolog)
+  n_iter <- length(batches)
+  # Batch sizes vary when row widths do, so SQL is built once per DISTINCT size and reused.
+  sql_cache <- new.env(parent = emptyenv())
+  sql_for <- function(k) {
+    key <- as.character(k)
+    if (is.null(sql_cache[[key]])) {
+      sql_cache[[key]] <- build_upsert_sql(table_name_in_base, cols, keycols, n_rows = k)
+    }
+    sql_cache[[key]]
+  }
   pb <- if (progress_bar) create_pb(n_iter, bar_style="pc", time_style="cd") else NULL
   affected <- 0L
   tryCatch(
     DBI::dbWithTransaction(con, {
       for (i in seq_len(n_iter)) {
-        rows <- ((i - 1L) * stmt_rows + 1L):min(i * stmt_rows, nrow(table))
-        sql_i <- if (length(rows) == stmt_rows) sql_full else sql_tail
+        rows <- batches[[i]]
         affected <- affected + RMariaDB::dbExecute(
-          con, sql_i, params = flatten_rowwise(table[rows, , drop = FALSE]))
+          con, sql_for(length(rows)), params = flatten_rowwise(table[rows, , drop = FALSE]))
         if (progress_bar) update_pb(pb, i)
       }
     }),

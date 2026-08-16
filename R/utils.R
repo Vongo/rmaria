@@ -102,54 +102,69 @@ flatten_rowwise <- function(df) {
 }
 
 
-# Fraction of max_allowed_packet a single batch may occupy. The row-size figure below is an
-# estimate from a sample, so the headroom absorbs skew (a few unusually long values among many
-# short ones) rather than trying to predict it exactly.
+# Fraction of max_allowed_packet a single batch may occupy. Headroom for the protocol framing
+# and statement text that ride along with the values.
 .UPSERT_PACKET_BUDGET <- 0.6
 
-# Average bytes per row, estimated from at most .UPSERT_SIZE_SAMPLE rows so the cost stays flat
-# for large frames. Deliberately generous: character columns are measured in BYTES (not
-# characters, which would under-count UTF-8), and every value carries a few bytes of protocol
-# framing.
-.UPSERT_SIZE_SAMPLE <- 1000L
-
-estimate_row_bytes <- function(df) {
+# Exact bytes per row, one element per row of df.
+#
+# Exact rather than sampled, and per row rather than averaged, because a batch is made of
+# ADJACENT rows. A mean cannot bound that: a frame whose wide rows cluster (sorted by something
+# correlated with payload size, or a partial backfill where recent rows are fatter) has an
+# accurate mean and a catastrophic worst batch. Measured on 20000 rows whose first 1000 carried
+# 200 KB each -- mean 10022 B/row, true mean 10010, and a batch sized from it carried 190 MB
+# against a 16 MB limit.
+#
+# Character columns are measured in BYTES, not characters, so UTF-8 is not under-counted.
+row_bytes <- function(df) {
   n <- nrow(df)
-  if (n == 0L || ncol(df) == 0L) return(1L)
-  idx <- if (n > .UPSERT_SIZE_SAMPLE) seq.int(1L, n, length.out = .UPSERT_SIZE_SAMPLE) else seq_len(n)
-  per_col <- vapply(df, function(col) {
-    v <- col[idx]
-    w <- if (is.character(v)) {
-      mean(nchar(v, type = "bytes"), na.rm = TRUE)
-    } else if (is.list(v)) {
-      mean(lengths(v), na.rm = TRUE)          # blob payloads
+  if (n == 0L || ncol(df) == 0L) return(numeric(0))
+  total <- numeric(n)
+  for (col in df) {
+    w <- if (is.character(col)) {
+      b <- nchar(col, type = "bytes"); b[is.na(b)] <- 4L; as.numeric(b)
+    } else if (is.list(col)) {
+      as.numeric(lengths(col))
     } else {
-      8                                        # numeric / integer / logical / Date / POSIXct
+      rep(8, n)
     }
-    if (!is.finite(w)) w <- 8                  # an all-NA column measures as NaN
-    w + 2                                      # per-value protocol framing
-  }, numeric(1))
-  max(1, sum(per_col))
+    total <- total + w + 2          # per-value protocol framing
+  }
+  total
 }
 
-# How many rows may go into one statement: the caller's hint, capped by the placeholder limit
-# and by what fits in the server's max_allowed_packet. Never returns less than 1 -- a single row
-# that cannot fit is the server's problem to report, not something to loop forever over.
-upsert_batch_rows <- function(table, chunk_size, con, nolog = FALSE) {
+# Row-index vectors, one per statement. Each batch respects three ceilings: the caller's
+# chunk_size, the 65535-placeholder cap, and -- walking actual row sizes rather than an average
+# -- the server's max_allowed_packet. A single row too large to fit alone still gets its own
+# batch and lets the server report the problem, rather than looping forever.
+upsert_batches <- function(table, chunk_size, con, nolog = FALSE) {
+  n <- nrow(table)
   by_placeholders <- .UPSERT_MAX_PLACEHOLDERS %/% max(1L, ncol(table))
+  cap <- max(1L, as.integer(min(chunk_size, by_placeholders)))
+
   limit <- tryCatch(
     as.numeric(RMariaDB::dbGetQuery(con, "SELECT @@max_allowed_packet AS p")$p[1]),
     error = function(e) NA_real_)
-  by_packet <- if (is.na(limit) || limit <= 0) {
-    Inf                                        # server would not say; fall back to the old bounds
-  } else {
-    floor(limit * .UPSERT_PACKET_BUDGET / estimate_row_bytes(table))
+  if (is.na(limit) || limit <= 0) {
+    # Server would not say; fall back to the count-based ceilings alone.
+    return(unname(split(seq_len(n), ceiling(seq_len(n) / cap))))   # unnamed, like the walk below
   }
-  rows <- max(1L, as.integer(min(chunk_size, by_placeholders, by_packet)))
-  if (!nolog && rows < chunk_size) {
-    logging::logdebug("upsert_table: batching %d rows per statement (requested %d; placeholder cap %d, packet cap %s).",
-                      rows, chunk_size, by_placeholders,
-                      if (is.finite(by_packet)) format(by_packet) else "n/a", logger = LOGGER.MAIN)
+
+  budget <- limit * .UPSERT_PACKET_BUDGET
+  cs <- cumsum(row_bytes(table))
+  out <- vector("list", 0L)
+  start <- 1L
+  while (start <= n) {
+    base <- if (start == 1L) 0 else cs[start - 1L]
+    # Last row whose cumulative size from `start` still fits the budget.
+    j <- findInterval(base + budget, cs)
+    end <- min(max(j, start), start + cap - 1L, n)
+    out[[length(out) + 1L]] <- start:end
+    start <- end + 1L
   }
-  rows
+  if (!nolog && length(out) > ceiling(n / cap)) {
+    logging::logdebug("upsert_table: %d statements for %d rows (row sizes, not just counts, bound the batch).",
+                      length(out), n, logger = LOGGER.MAIN)
+  }
+  out
 }

@@ -229,21 +229,7 @@ test_that("a payload larger than max_allowed_packet is split rather than rejecte
     })
 })
 
-test_that("upsert_batch_rows respects whichever ceiling binds first", {
-  con <- structure(list(), class = "fake")   # never queried: the estimator short-circuits below
-  # Narrow frame, small chunk_size -> the caller's hint wins.
-  narrow <- data.frame(id = 1:10, v = 1)
-  expect_equal(upsert_batch_rows(narrow, 5L, con = NULL, nolog = TRUE), 5L)
-  # Never returns 0, whatever the inputs.
-  expect_gte(upsert_batch_rows(narrow, 1L, con = NULL, nolog = TRUE), 1L)
-})
 
-test_that("estimate_row_bytes counts character columns in bytes, not characters", {
-  ascii <- data.frame(v = strrep("x", 10), stringsAsFactors = FALSE)
-  utf8  <- data.frame(v = strrep("é", 10), stringsAsFactors = FALSE)   # 2 bytes per char
-  expect_gt(estimate_row_bytes(utf8), estimate_row_bytes(ascii))
-  expect_gte(estimate_row_bytes(data.frame()), 1)
-})
 
 # --- pure unit tests: no DB, so these run even where the integration gate skips ------
 
@@ -288,16 +274,35 @@ test_that("flatten_rowwise refuses a column that is not a plain length-nrow vect
   expect_error(flatten_rowwise(df2), "nested data.frame columns are not supported")
 })
 
-test_that("upsert_batch_rows never exceeds the placeholder cap", {
-  # Pins the CHOSEN batch size rather than the outcome: expect_no_error + COUNT(*) cannot tell
-  # "sub-split correctly" from "never batched at all".
-  wide <- as.data.frame(matrix(1, nrow = 10, ncol = 70))
-  expect_equal(upsert_batch_rows(wide, 30000L, con = NULL, nolog = TRUE), 936L)   # 65535 %/% 70
-  three <- as.data.frame(matrix(1, nrow = 10, ncol = 3))
-  expect_equal(upsert_batch_rows(three, 30000L, con = NULL, nolog = TRUE), 21845L) # 65535 %/% 3
-  one <- as.data.frame(matrix(1, nrow = 10, ncol = 1))
-  expect_equal(upsert_batch_rows(one, 30000L, con = NULL, nolog = TRUE), 30000L)   # hint wins
-  expect_equal(upsert_batch_rows(three, 5L, con = NULL, nolog = TRUE), 5L)
+test_that("upsert_batches never exceeds the placeholder cap", {
+  # Pins the CHOSEN batching rather than the outcome: expect_no_error + COUNT(*) cannot tell
+  # "sub-split correctly" from "never batched at all". con = NULL makes the packet query fail,
+  # so only the count-based ceilings apply.
+  wide <- as.data.frame(matrix(1, nrow = 10000, ncol = 70))
+  expect_equal(lengths(upsert_batches(wide, 30000L, con = NULL, nolog = TRUE))[[1]], 936L)
+  three <- as.data.frame(matrix(1, nrow = 50000, ncol = 3))
+  expect_equal(lengths(upsert_batches(three, 30000L, con = NULL, nolog = TRUE))[[1]], 21845L)
+  one <- as.data.frame(matrix(1, nrow = 50000, ncol = 1))
+  expect_equal(lengths(upsert_batches(one, 30000L, con = NULL, nolog = TRUE))[[1]], 30000L)
+  small <- as.data.frame(matrix(1, nrow = 10, ncol = 3))
+  expect_equal(lengths(upsert_batches(small, 5L, con = NULL, nolog = TRUE)), c(5L, 5L))
+})
+
+test_that("upsert_batches covers every row exactly once", {
+  b <- upsert_batches(as.data.frame(matrix(1, nrow = 253, ncol = 3)), 60L, con = NULL, nolog = TRUE)
+  expect_equal(sort(unlist(b)), 1:253)
+})
+
+test_that("row_bytes measures per row, in bytes, and sees clustered width", {
+  # The statistic that matters: a frame whose wide rows are CONTIGUOUS has an unremarkable mean
+  # and a catastrophic worst batch. Per-row sizes expose that where an average cannot.
+  df <- data.frame(v = c(strrep("x", 1000), "y", "z"), stringsAsFactors = FALSE)
+  w <- row_bytes(df)
+  expect_length(w, 3L)
+  expect_gt(w[1], 1000)
+  expect_lt(w[2], 20)
+  expect_gt(row_bytes(data.frame(v = "\u00e9", stringsAsFactors = FALSE)),
+            row_bytes(data.frame(v = "e", stringsAsFactors = FALSE)))
 })
 
 test_that("build_upsert_sql rejects a zero n_rows with a real message", {
@@ -335,5 +340,30 @@ test_that("a failure in a later chunk rolls back the earlier ones", {
       # Rows 1-2 committed in the first statement must NOT survive the failure of the second.
       got <- RMariaDB::dbGetQuery(con, sprintf("SELECT COUNT(*) c FROM `%s`", tbl))
       expect_equal(got$c, 0)
+    })
+})
+
+test_that("a frame whose wide rows are CLUSTERED still fits every batch in a packet", {
+  # Regression: batch sizing from a MEAN row width. Here the mean is accurate and useless --
+  # the wide rows are adjacent, so they all land in the same batch. Measured on the mean-based
+  # version: estimate 10022 B/row, batch of 1004 rows, 190 MB against a 16 MB limit, [2006].
+  tbl <- "rmaria_skew_batch"
+  with_test_table(
+    sprintf("CREATE TABLE `%s` (id INT UNSIGNED NOT NULL, v LONGTEXT, PRIMARY KEY (id))", tbl),
+    tbl, {
+      e <- db_env()
+      n_wide <- 300L; n_thin <- 5000L
+      df <- data.frame(
+        id = seq_len(n_wide + n_thin),
+        v = c(rep(strrep("x", 200000L), n_wide), rep("y", n_thin)),
+        stringsAsFactors = FALSE)
+      expect_no_error(
+        upsert_table(df, tbl, keycols = "id", host = e$host, port = e$port, db = e$db,
+                     user = e$user, password = e$pwd, progress_bar = FALSE, nolog = TRUE)
+      )
+      con <- test_con(); on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+      got <- RMariaDB::dbGetQuery(con, sprintf("SELECT COUNT(*) c, MAX(LENGTH(v)) mx FROM `%s`", tbl))
+      expect_equal(got$c, n_wide + n_thin)
+      expect_equal(got$mx, 200000)   # wide values intact, not truncated
     })
 })
