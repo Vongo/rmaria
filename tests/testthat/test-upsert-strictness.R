@@ -21,10 +21,16 @@ test_that("a too-long value in row 2 raises on a non-transactional engine", {
   with_test_table(
     sprintf("CREATE TABLE `%s` (id INT UNSIGNED NOT NULL, v VARCHAR(3), PRIMARY KEY (id)) ENGINE=MyISAM", tbl),
     tbl, {
+      con0 <- test_con(); on.exit(RMariaDB::dbDisconnect(con0), add = TRUE)
+      # Precondition, not decoration: on a STRICT_ALL_TABLES server MyISAM is batched and
+      # raises anyway, so without this the assertions below would pass without ever
+      # exercising the fallback they exist to cover.
+      expect_false(upsert_batching_is_safe(con0, tbl)$safe)
       e <- db_env()
       expect_error(
         upsert_table(.badrow_df(), tbl, keycols = "id", host = e$host, port = e$port, db = e$db,
-                     user = e$user, password = e$pwd, progress_bar = FALSE, nolog = TRUE)
+                     user = e$user, password = e$pwd, progress_bar = FALSE, nolog = TRUE),
+        regexp = "Data too long"
       )
       con <- test_con(); on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
       # MyISAM cannot roll back, so rows 1 (and possibly 3) may remain -- what must NOT happen
@@ -39,11 +45,17 @@ test_that("a NULL into NOT NULL in row 2 raises on a non-transactional engine", 
   with_test_table(
     sprintf("CREATE TABLE `%s` (id INT UNSIGNED NOT NULL, v VARCHAR(8) NOT NULL, PRIMARY KEY (id)) ENGINE=MyISAM", tbl),
     tbl, {
+      con0 <- test_con(); on.exit(RMariaDB::dbDisconnect(con0), add = TRUE)
+      # Precondition, not decoration: on a STRICT_ALL_TABLES server MyISAM is batched and
+      # raises anyway, so without this the assertions below would pass without ever
+      # exercising the fallback they exist to cover.
+      expect_false(upsert_batching_is_safe(con0, tbl)$safe)
       e <- db_env()
       df <- data.frame(id = 1:3, v = c("ok", NA, "ok3"), stringsAsFactors = FALSE)
       expect_error(
         upsert_table(df, tbl, keycols = "id", host = e$host, port = e$port, db = e$db,
-                     user = e$user, password = e$pwd, progress_bar = FALSE, nolog = TRUE)
+                     user = e$user, password = e$pwd, progress_bar = FALSE, nolog = TRUE),
+        regexp = "cannot be null"
       )
       con <- test_con(); on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
       got <- RMariaDB::dbGetQuery(con, sprintf("SELECT v FROM `%s` WHERE id = 2", tbl))
@@ -56,11 +68,17 @@ test_that("an out-of-range value in row 2 raises on a non-transactional engine",
   with_test_table(
     sprintf("CREATE TABLE `%s` (id INT UNSIGNED NOT NULL, n TINYINT, PRIMARY KEY (id)) ENGINE=MyISAM", tbl),
     tbl, {
+      con0 <- test_con(); on.exit(RMariaDB::dbDisconnect(con0), add = TRUE)
+      # Precondition, not decoration: on a STRICT_ALL_TABLES server MyISAM is batched and
+      # raises anyway, so without this the assertions below would pass without ever
+      # exercising the fallback they exist to cover.
+      expect_false(upsert_batching_is_safe(con0, tbl)$safe)
       e <- db_env()
       df <- data.frame(id = 1:3, n = c(1L, 9999L, 3L))
       expect_error(
         upsert_table(df, tbl, keycols = "id", host = e$host, port = e$port, db = e$db,
-                     user = e$user, password = e$pwd, progress_bar = FALSE, nolog = TRUE)
+                     user = e$user, password = e$pwd, progress_bar = FALSE, nolog = TRUE),
+        regexp = "Out of range"
       )
       con <- test_con(); on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
       got <- RMariaDB::dbGetQuery(con, sprintf("SELECT n FROM `%s` WHERE id = 2", tbl))
@@ -96,7 +114,8 @@ test_that("a transactional engine under strict mode is unaffected and still rais
       e <- db_env()
       expect_error(
         upsert_table(.badrow_df(), tbl, keycols = "id", host = e$host, port = e$port, db = e$db,
-                     user = e$user, password = e$pwd, progress_bar = FALSE, nolog = TRUE)
+                     user = e$user, password = e$pwd, progress_bar = FALSE, nolog = TRUE),
+        regexp = "Data too long"
       )
       con <- test_con(); on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
       got <- RMariaDB::dbGetQuery(con, sprintf("SELECT COUNT(*) c FROM `%s`", tbl))
@@ -176,7 +195,8 @@ test_that("MyRocks is judged safe, and behaves that way", {
       e <- db_env()
       expect_error(
         upsert_table(.badrow_df(), tbl, keycols = "id", host = e$host, port = e$port, db = e$db,
-                     user = e$user, password = e$pwd, progress_bar = FALSE, nolog = TRUE)
+                     user = e$user, password = e$pwd, progress_bar = FALSE, nolog = TRUE),
+        regexp = "Data too long"
       )
       got <- RMariaDB::dbGetQuery(con, sprintf("SELECT COUNT(*) c FROM `%s`", tbl))
       expect_equal(as.numeric(got$c), 0)   # transactional: rolled back, nothing truncated
@@ -204,7 +224,8 @@ test_that("the one-row short-circuit still raises on a bad value", {
       expect_error(
         upsert_table(data.frame(id = 1L, v = "WAY-TOO-LONG", stringsAsFactors = FALSE), tbl,
                      keycols = "id", host = e$host, port = e$port, db = e$db,
-                     user = e$user, password = e$pwd, progress_bar = FALSE, nolog = TRUE)
+                     user = e$user, password = e$pwd, progress_bar = FALSE, nolog = TRUE),
+        regexp = "Data too long"
       )
       con <- test_con(); on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
       got <- RMariaDB::dbGetQuery(con, sprintf("SELECT COUNT(*) c FROM `%s`", tbl))
@@ -220,11 +241,17 @@ test_that("two rows are enough to need the check -- the boundary, not just the c
   with_test_table(
     sprintf("CREATE TABLE `%s` (id INT UNSIGNED NOT NULL, v VARCHAR(3), PRIMARY KEY (id)) ENGINE=MyISAM", tbl),
     tbl, {
+      con0 <- test_con(); on.exit(RMariaDB::dbDisconnect(con0), add = TRUE)
+      # Precondition, not decoration: on a STRICT_ALL_TABLES server MyISAM is batched and
+      # raises anyway, so without this the assertions below would pass without ever
+      # exercising the fallback they exist to cover.
+      expect_false(upsert_batching_is_safe(con0, tbl)$safe)
       e <- db_env()
       df <- data.frame(id = 1:2, v = c("ok", "WAY-TOO-LONG"), stringsAsFactors = FALSE)
       expect_error(
         upsert_table(df, tbl, keycols = "id", host = e$host, port = e$port, db = e$db,
-                     user = e$user, password = e$pwd, progress_bar = FALSE, nolog = TRUE)
+                     user = e$user, password = e$pwd, progress_bar = FALSE, nolog = TRUE),
+        regexp = "Data too long"
       )
       con <- test_con(); on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
       got <- RMariaDB::dbGetQuery(con, sprintf("SELECT v FROM `%s` WHERE id = 2", tbl))
