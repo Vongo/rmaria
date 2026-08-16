@@ -147,3 +147,30 @@ test_that("the safe path batches and the unsafe path does not -- counted, not ti
   expect_lt(counts[["InnoDB"]], 50)
   expect_gte(counts[["MyISAM"]], 500)
 })
+
+test_that("MyRocks is judged safe, and behaves that way", {
+  # mega -- the reason this package exists -- stores its large tables on MyRocks, not InnoDB.
+  # If the engine lookup misjudged ROCKSDB the 200M-row loads would silently drop to one
+  # statement per row. It reports TRANSACTIONS=YES and honours STRICT_TRANS_TABLES like InnoDB;
+  # this pins both the judgement and the behaviour it is predicting.
+  skip_if_no_db()
+  con <- test_con(); on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+  supported <- RMariaDB::dbGetQuery(
+    con, "SELECT SUPPORT FROM information_schema.ENGINES WHERE ENGINE = 'ROCKSDB'")
+  skip_if(nrow(supported) == 0L || !supported$SUPPORT[1] %in% c("YES", "DEFAULT"),
+          "RocksDB engine not available on this server")
+
+  tbl <- "rmaria_strict_rocksdb"
+  with_test_table(
+    sprintf("CREATE TABLE `%s` (id INT UNSIGNED NOT NULL, v VARCHAR(3), PRIMARY KEY (id)) ENGINE=RocksDB", tbl),
+    tbl, {
+      expect_true(upsert_batching_is_safe(con, tbl))
+      e <- db_env()
+      expect_error(
+        upsert_table(.badrow_df(), tbl, keycols = "id", host = e$host, port = e$port, db = e$db,
+                     user = e$user, password = e$pwd, progress_bar = FALSE, nolog = TRUE)
+      )
+      got <- RMariaDB::dbGetQuery(con, sprintf("SELECT COUNT(*) c FROM `%s`", tbl))
+      expect_equal(as.numeric(got$c), 0)   # transactional: rolled back, nothing truncated
+    })
+})
