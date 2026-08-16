@@ -319,3 +319,62 @@ test_that("the live lookup follows the session it is asked about, not the server
       expect_true(loose_clean$safe)
     })
 })
+
+# --- what the fallback says when it fails ----------------------------------------
+
+test_that("a failing row is named, with the count already written", {
+  # Bound as column vectors, every failure on this path reported "at row 1" -- each execution
+  # is its own single-row statement -- so a 10,000-row chunk named nothing. The failure must
+  # locate the row and say how much preceded it, because this path is chosen for tables that
+  # cannot roll it back.
+  tbl <- "rmaria_strict_attrib"
+  with_test_table(
+    sprintf("CREATE TABLE `%s` (id INT UNSIGNED NOT NULL, v VARCHAR(3), PRIMARY KEY (id)) ENGINE=MyISAM", tbl),
+    tbl, {
+      e <- db_env()
+      df <- data.frame(id = 1:5, v = c("ok", "ok", "ok", "WAY-TOO-LONG", "ok"),
+                       stringsAsFactors = FALSE)
+      expect_error(
+        upsert_table(df, tbl, keycols = "id", host = e$host, port = e$port, db = e$db,
+                     user = e$user, password = e$pwd, progress_bar = FALSE, nolog = TRUE),
+        regexp = "row 4 of 5"
+      )
+      expect_error(
+        upsert_table(df, tbl, keycols = "id", host = e$host, port = e$port, db = e$db,
+                     user = e$user, password = e$pwd, progress_bar = FALSE, nolog = TRUE),
+        regexp = "3 rows already written"
+      )
+      # The message has to be true: MyISAM keeps what landed before the failure.
+      con <- test_con(); on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+      got <- RMariaDB::dbGetQuery(con, sprintf("SELECT COUNT(*) c FROM `%s`", tbl))
+      expect_equal(as.numeric(got$c), 3)
+      # ...and it still names the underlying cause, not just the position.
+      expect_error(
+        upsert_table(df, tbl, keycols = "id", host = e$host, port = e$port, db = e$db,
+                     user = e$user, password = e$pwd, progress_bar = FALSE, nolog = TRUE),
+        regexp = "Data too long"
+      )
+    })
+})
+
+test_that("the fallback still reports affected rows the same way it always did", {
+  # 1 per insert, 2 per updated row, 0 per unchanged row -- the documented contract, which must
+  # not shift just because the execution moved to dbBind.
+  tbl <- "rmaria_strict_affected"
+  with_test_table(
+    sprintf("CREATE TABLE `%s` (id INT UNSIGNED NOT NULL, v VARCHAR(16), PRIMARY KEY (id)) ENGINE=MyISAM", tbl),
+    tbl, {
+      e <- db_env()
+      up <- function(df) upsert_table(df, tbl, keycols = "id", host = e$host, port = e$port,
+                                      db = e$db, user = e$user, password = e$pwd,
+                                      progress_bar = FALSE, nolog = TRUE)
+      fresh <- data.frame(id = 1:4, v = c("a", "b", "c", "d"), stringsAsFactors = FALSE)
+      expect_equal(as.integer(up(fresh)), 4L)                      # 4 inserts
+      expect_equal(as.integer(up(fresh)), 0L)                      # unchanged
+      changed <- data.frame(id = 1:4, v = c("A", "B", "c", "d"), stringsAsFactors = FALSE)
+      expect_equal(as.integer(up(changed)), 4L)                    # 2 updated x2, 2 unchanged
+      con <- test_con(); on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+      got <- RMariaDB::dbGetQuery(con, sprintf("SELECT v FROM `%s` ORDER BY id", tbl))
+      expect_equal(got$v, c("A", "B", "c", "d"))
+    })
+})

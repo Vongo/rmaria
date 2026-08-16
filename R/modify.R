@@ -1,3 +1,40 @@
+# The fallback write: one statement per row, which is what upsert_table did before batching.
+#
+# Prepared once and bound per row, rather than handed column vectors to bind for us. The wire
+# cost is identical -- either way the server executes once per row, which is exactly why this
+# path is slow -- but the loop index lives in R, so a failure can say WHICH row failed and how
+# many rows preceded it. Bound as column vectors, every error reads "at row 1", because each
+# execution is its own single-row statement; in a 10,000-row chunk that names nothing.
+#
+# The count matters here more than on the batched path: this path is chosen for tables that
+# cannot roll back, so rows written before the failure stay written, and dbWithTransaction's
+# ROLLBACK is a silent no-op.
+.upsert_row_by_row <- function(con, sql, table, batches, table_name_in_base,
+                               pb = NULL, progress_bar = FALSE) {
+  stmt <- RMariaDB::dbSendStatement(con, sql)
+  on.exit(try(RMariaDB::dbClearResult(stmt), silent = TRUE), add = TRUE)
+  affected <- 0L
+  written <- 0L
+  total <- nrow(table)
+  for (i in seq_along(batches)) {
+    for (r in batches[[i]]) {
+      tryCatch({
+        RMariaDB::dbBind(stmt, unname(as.list(table[r, , drop = FALSE])))
+        affected <- affected + RMariaDB::dbGetRowsAffected(stmt)
+        written <- written + 1L
+      }, error = function(e) {
+        stop(sprintf("upsert_table: row %d of %d failed on %s: %s (%d row%s already written%s)",
+                     r, total, table_name_in_base, conditionMessage(e), written,
+                     if (written == 1L) "" else "s",
+                     if (written > 0L) " and NOT rolled back if this table is non-transactional" else ""),
+             call. = FALSE)
+      })
+    }
+    if (progress_bar) update_pb(pb, i)
+  }
+  affected
+}
+
 #' Simplified upsert
 #'
 #' Simple method that upserts the input data.frame or data.table into the designated table in the current DB context.
@@ -123,17 +160,17 @@ upsert_table <- function(table, table_name_in_base, keycols, host="localhost", p
   affected <- 0L
   tryCatch(
     DBI::dbWithTransaction(con, {
-      for (i in seq_len(n_iter)) {
-        rows <- batches[[i]]
-        chunk <- table[rows, , drop = FALSE]
-        affected <- affected + if (batched) {
-          RMariaDB::dbExecute(con, sql_for(length(rows)), params = flatten_rowwise(chunk))
-        } else {
-          # The pre-batching form: a single-row statement bound to column vectors, which DBI
-          # executes once per row -- and therefore raises on the first bad value, wherever it is.
-          RMariaDB::dbExecute(con, sql_for(1L), params = unname(as.list(chunk)))
+      if (batched) {
+        for (i in seq_len(n_iter)) {
+          rows <- batches[[i]]
+          affected <- affected + RMariaDB::dbExecute(
+            con, sql_for(length(rows)), params = flatten_rowwise(table[rows, , drop = FALSE]))
+          if (progress_bar) update_pb(pb, i)
         }
-        if (progress_bar) update_pb(pb, i)
+      } else {
+        affected <- affected + .upsert_row_by_row(
+          con, sql_for(1L), table, batches, table_name_in_base,
+          pb = pb, progress_bar = progress_bar)
       }
     }),
     error = function(e) {
