@@ -168,3 +168,40 @@ upsert_batches <- function(table, chunk_size, con, nolog = FALSE) {
   }
   out
 }
+
+
+# Does batching preserve the errors per-row execution would have raised?
+#
+# MariaDB downgrades error -> warning for an invalid value in the SECOND OR LATER row of a
+# multi-row statement. That never applied to per-row execution, so wherever strictness does NOT
+# cover the target, batching silently coerces a bad value and reports success. See Vongo/rmaria#7.
+#
+# STRICT_ALL_TABLES covers every engine. STRICT_TRANS_TABLES covers only TRANSACTIONAL ones --
+# which is why a MyISAM table under the default sql_mode is exposed. Anything else, including an
+# engine we could not identify, is treated as unsafe.
+#
+# Pure so the decision is testable without a server: `transactional` is TRUE/FALSE/NA.
+batching_preserves_errors <- function(sql_mode, transactional) {
+  mode <- if (length(sql_mode) == 0L || is.na(sql_mode[1])) "" else toupper(as.character(sql_mode[1]))
+  if (grepl("STRICT_ALL_TABLES", mode, fixed = TRUE)) return(TRUE)
+  if (!grepl("STRICT_TRANS_TABLES", mode, fixed = TRUE)) return(FALSE)
+  isTRUE(transactional)
+}
+
+# Asks the server the two questions batching_preserves_errors needs. Any failure to answer is
+# reported as unsafe rather than assumed away.
+upsert_batching_is_safe <- function(con, table_name_in_base) {
+  mode <- tryCatch(RMariaDB::dbGetQuery(con, "SELECT @@session.sql_mode AS m")$m[1],
+                   error = function(e) NA_character_)
+  if (is.na(mode)) return(FALSE)
+  if (grepl("STRICT_ALL_TABLES", toupper(mode), fixed = TRUE)) return(TRUE)
+  transactional <- tryCatch({
+    eng <- RMariaDB::dbGetQuery(con, paste(
+      "SELECT e.TRANSACTIONS AS t FROM information_schema.TABLES tb",
+      "JOIN information_schema.ENGINES e ON e.ENGINE = tb.ENGINE",
+      "WHERE tb.TABLE_SCHEMA = DATABASE() AND tb.TABLE_NAME = ?"),
+      params = list(table_name_in_base))
+    if (nrow(eng) == 0L) NA else identical(toupper(eng$t[1]), "YES")
+  }, error = function(e) NA)
+  batching_preserves_errors(mode, transactional)
+}

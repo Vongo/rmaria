@@ -83,7 +83,22 @@ upsert_table <- function(table, table_name_in_base, keycols, host="localhost", p
   # column count, the row width or the server's packet limit -- so sub-split rather than fail.
   con <- .maria_connect(host, port, db, user, password)
   on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
-  batches <- upsert_batches(table, chunk_size, con = con, nolog = nolog)
+  # Batching is only sound where strictness actually covers the target: MariaDB downgrades an
+  # invalid value in row 2+ of a multi-row statement from error to warning, which per-row
+  # execution never did. Where it does not apply, fall back to one statement per row -- slower,
+  # but it is the semantics every caller had before batching existed. See Vongo/rmaria#7.
+  # A one-row frame has no "row 2+", so the question does not arise and the two lookups the
+  # check costs would be pure latency on the smallest calls.
+  batched <- nrow(table) == 1L || upsert_batching_is_safe(con, table_name_in_base)
+  batches <- if (batched) {
+    upsert_batches(table, chunk_size, con = con, nolog = nolog)
+  } else {
+    if (!nolog) {
+      logging::logdebug("upsert_table: %s is not covered by strict mode; writing one row per statement to keep bad values raising.",
+                        table_name_in_base, logger = LOGGER.MAIN)
+    }
+    unname(split(seq_len(nrow(table)), ceiling(seq_len(nrow(table)) / chunk_size)))
+  }
   n_iter <- length(batches)
   # Batch sizes vary when row widths do, so SQL is built once per DISTINCT size and reused.
   sql_cache <- new.env(parent = emptyenv())
@@ -100,8 +115,14 @@ upsert_table <- function(table, table_name_in_base, keycols, host="localhost", p
     DBI::dbWithTransaction(con, {
       for (i in seq_len(n_iter)) {
         rows <- batches[[i]]
-        affected <- affected + RMariaDB::dbExecute(
-          con, sql_for(length(rows)), params = flatten_rowwise(table[rows, , drop = FALSE]))
+        chunk <- table[rows, , drop = FALSE]
+        affected <- affected + if (batched) {
+          RMariaDB::dbExecute(con, sql_for(length(rows)), params = flatten_rowwise(chunk))
+        } else {
+          # The pre-batching form: a single-row statement bound to column vectors, which DBI
+          # executes once per row -- and therefore raises on the first bad value, wherever it is.
+          RMariaDB::dbExecute(con, sql_for(1L), params = unname(as.list(chunk)))
+        }
         if (progress_bar) update_pb(pb, i)
       }
     }),
