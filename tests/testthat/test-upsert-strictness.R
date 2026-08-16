@@ -169,6 +169,7 @@ test_that("the safe path batches and the unsafe path does not -- counted, not ti
   stmts <- function() as.numeric(
     RMariaDB::dbGetQuery(con, "SHOW GLOBAL STATUS LIKE 'Com_stmt_execute'")$Value)
 
+  verdicts <- list()
   counts <- vapply(c("InnoDB", "MyISAM"), function(eng) {
     tbl <- paste0("rmaria_rt_", eng)
     RMariaDB::dbExecute(con, sprintf("DROP TABLE IF EXISTS `%s`", tbl))
@@ -176,14 +177,22 @@ test_that("the safe path batches and the unsafe path does not -- counted, not ti
       "CREATE TABLE `%s` (id INT UNSIGNED NOT NULL, v VARCHAR(16), PRIMARY KEY (id)) ENGINE=%s", tbl, eng))
     on.exit(RMariaDB::dbExecute(con, sprintf("DROP TABLE IF EXISTS `%s`", tbl)), add = TRUE)
     df <- data.frame(id = 1:500, v = "x", stringsAsFactors = FALSE)
+    verdicts[[eng]] <<- upsert_batching_is_safe(con, tbl)$safe
     before <- stmts()
     upsert_table(df, tbl, keycols = "id", host = e$host, port = e$port, db = e$db,
                  user = e$user, password = e$pwd, progress_bar = FALSE, nolog = TRUE)
     stmts() - before
   }, numeric(1))
 
-  # InnoDB: a handful (the upsert plus the safety/limit lookups). MyISAM: one per row.
-  expect_lt(counts[["InnoDB"]], 50)
+  expect_true(verdicts[["InnoDB"]])
+  expect_false(verdicts[["MyISAM"]])
+
+  # The verdict is the deterministic half of this test: it is what actually decides the path,
+  # and it cannot be perturbed by anything else on the server.
+  # The counter is the corroborating half, and it is GLOBAL -- SESSION scope would see nothing,
+  # because upsert_table opens its own connection. Other sessions can only ADD to it, so the
+  # MyISAM floor is safe either way while the InnoDB ceiling is given room for a busy server.
+  expect_lt(counts[["InnoDB"]], 100)
   expect_gte(counts[["MyISAM"]], 500)
 })
 
