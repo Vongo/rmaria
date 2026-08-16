@@ -172,7 +172,7 @@ test_that("MyRocks is judged safe, and behaves that way", {
   with_test_table(
     sprintf("CREATE TABLE `%s` (id INT UNSIGNED NOT NULL, v VARCHAR(3), PRIMARY KEY (id)) ENGINE=RocksDB", tbl),
     tbl, {
-      expect_true(upsert_batching_is_safe(con, tbl))
+      expect_true(upsert_batching_is_safe(con, tbl)$safe)
       e <- db_env()
       expect_error(
         upsert_table(.badrow_df(), tbl, keycols = "id", host = e$host, port = e$port, db = e$db,
@@ -244,4 +244,35 @@ test_that("a frame is judged to bind NULL only when it actually can", {
   expect_true(.frame_may_bind_null(df))
 })
 
+test_that("the reason distinguishes the situations a bare TRUE/FALSE cannot", {
+  expect_match(.batching_reason(FALSE, NA, NA, "t"), "did not answer")
+  expect_match(.batching_reason(TRUE, "STRICT_ALL_TABLES", NA, "t"), "every engine")
+  expect_match(.batching_reason(FALSE, "STRICT_TRANS_TABLES", NA, "t"), "could not be identified")
+  expect_match(.batching_reason(FALSE, "STRICT_TRANS_TABLES", NA, "widgets"), "widgets")
+  expect_match(.batching_reason(FALSE, "STRICT_TRANS_TABLES", FALSE, "t"), "non-transactional")
+  expect_match(.batching_reason(TRUE, "STRICT_TRANS_TABLES", TRUE, "t"), "transactional engine")
+  expect_match(.batching_reason(FALSE, "", TRUE, "t"), "not in strict mode")
+  expect_match(.batching_reason(TRUE, "", TRUE, "t"), "binds no NULL")
+})
 
+test_that("the live lookup follows the session it is asked about, not the server default", {
+  # upsert_table cannot be pointed at a non-strict server from here (it opens its own
+  # connection), but the lookup reads @@SESSION.sql_mode -- so a session with strict mode off
+  # exercises the same code path the CRITICAL case would, on the server we already have.
+  skip_if_no_db()
+  tbl <- "rmaria_strict_session"
+  with_test_table(
+    sprintf("CREATE TABLE `%s` (id INT UNSIGNED NOT NULL, v VARCHAR(16), PRIMARY KEY (id)) ENGINE=InnoDB", tbl),
+    tbl, {
+      con <- test_con(); on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+      expect_true(upsert_batching_is_safe(con, tbl)$safe)          # strict by default
+
+      RMariaDB::dbExecute(con, "SET SESSION sql_mode = ''")
+      loose_null <- upsert_batching_is_safe(con, tbl, may_bind_null = TRUE)
+      loose_clean <- upsert_batching_is_safe(con, tbl, may_bind_null = FALSE)
+      # Same server, same table, same engine: only the data decides now.
+      expect_false(loose_null$safe)
+      expect_match(loose_null$reason, "not in strict mode")
+      expect_true(loose_clean$safe)
+    })
+})

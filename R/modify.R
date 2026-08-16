@@ -90,15 +90,22 @@ upsert_table <- function(table, table_name_in_base, keycols, host="localhost", p
   # A one-row frame has no "row 2+", so the question does not arise and the check's two lookups
   # would be pure latency on the smallest calls. (It still enters upsert_batches below, which
   # asks the server for max_allowed_packet -- cheaper, not lookup-free.)
-  batched <- nrow(table) == 1L ||
+  safety <- if (nrow(table) == 1L) {
+    list(safe = TRUE, reason = "a single-row frame has no second row to downgrade")
+  } else {
     upsert_batching_is_safe(con, table_name_in_base,
                             may_bind_null = .frame_may_bind_null(table))
+  }
+  batched <- safety$safe
   batches <- if (batched) {
     upsert_batches(table, chunk_size, con = con, nolog = nolog)
   } else {
+    # WARN, not DEBUG: this costs one round trip per row instead of per batch -- a 50x
+    # difference on a large write -- so an operator who did not ask for it needs to see it at a
+    # level that is actually emitted, with the reason and the size attached.
     if (!nolog) {
-      logging::logdebug("upsert_table: %s is not covered by strict mode; writing one row per statement to keep bad values raising.",
-                        table_name_in_base, logger = LOGGER.MAIN)
+      logging::logwarn("upsert_table: writing %s rows to %s one statement at a time rather than in batches, because %s.",
+                       nrow(table), table_name_in_base, safety$reason, logger = LOGGER.MAIN)
     }
     unname(split(seq_len(nrow(table)), ceiling(seq_len(nrow(table)) / chunk_size)))
   }

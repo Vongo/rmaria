@@ -203,6 +203,34 @@ batching_preserves_errors <- function(sql_mode, transactional, may_bind_null = T
   any(vapply(table, function(col) is.list(col) || anyNA(col), logical(1)))
 }
 
+# Why the verdict came out as it did. Kept separate from the decision itself -- one place
+# decides, this one explains -- so a log line can distinguish an expected fallback from one the
+# operator needs to act on.
+.batching_reason <- function(safe, sql_mode, transactional, table_name_in_base) {
+  if (length(sql_mode) == 0L || is.na(sql_mode[1])) {
+    return("the server did not answer @@session.sql_mode")
+  }
+  mode <- toupper(as.character(sql_mode[1]))
+  if (grepl("STRICT_ALL_TABLES", mode, fixed = TRUE)) {
+    return("STRICT_ALL_TABLES covers every engine")
+  }
+  if (!grepl("STRICT_TRANS_TABLES", mode, fixed = TRUE)) {
+    return(if (safe) {
+      "the server is not in strict mode, so invalid values are coerced whichever way they are sent; this data binds no NULL, which is the one class that would still differ"
+    } else {
+      "the server is not in strict mode: NULL into a NOT NULL column raises only when rows are sent one at a time (other invalid values are coerced either way -- set STRICT_TRANS_TABLES on the server if that matters)"
+    })
+  }
+  if (is.na(transactional)) {
+    return(sprintf("the engine behind '%s' could not be identified", table_name_in_base))
+  }
+  if (transactional) {
+    "STRICT_TRANS_TABLES covers this table's transactional engine"
+  } else {
+    "STRICT_TRANS_TABLES does not reach this table's non-transactional engine"
+  }
+}
+
 # One scalar out of a query result, or NA if the server answered with a shape we did not ask
 # for. `df$col[1]` is not safe to test with is.na(): a missing column gives NULL, NULL[1] is
 # NULL, and `if (is.na(NULL))` is a hard error rather than a verdict -- which would take down an
@@ -215,12 +243,22 @@ batching_preserves_errors <- function(sql_mode, transactional, may_bind_null = T
 
 # Asks the server the two questions batching_preserves_errors needs. Any failure to answer is
 # reported as unsafe rather than assumed away.
+#
+# Returns the verdict AND the reason for it: "unsafe" and "could not tell" are different
+# situations -- one is a MyISAM table behaving as documented, the other is an engine lookup that
+# failed -- and a caller that only gets a logical can never tell an operator which happened.
 upsert_batching_is_safe <- function(con, table_name_in_base, may_bind_null = TRUE) {
   mode <- tryCatch(.scalar_or_na(
     RMariaDB::dbGetQuery(con, "SELECT @@session.sql_mode AS m"), "m"),
     error = function(e) NA)
-  if (is.na(mode)) return(FALSE)
-  if (grepl("STRICT_ALL_TABLES", toupper(mode), fixed = TRUE)) return(TRUE)
+  decide <- function(transactional) {
+    safe <- batching_preserves_errors(mode, transactional, may_bind_null)
+    list(safe = safe,
+         reason = .batching_reason(safe, mode, transactional, table_name_in_base))
+  }
+  if (is.na(mode)) return(decide(NA))
+  # STRICT_ALL_TABLES settles it whatever the engine is, so skip the second round trip.
+  if (grepl("STRICT_ALL_TABLES", toupper(mode), fixed = TRUE)) return(decide(NA))
   transactional <- tryCatch({
     eng <- RMariaDB::dbGetQuery(con, paste(
       "SELECT e.TRANSACTIONS AS t FROM information_schema.TABLES tb",
@@ -232,5 +270,5 @@ upsert_batching_is_safe <- function(con, table_name_in_base, may_bind_null = TRU
     t <- .scalar_or_na(eng, "t")
     if (is.na(t)) NA else identical(toupper(t), "YES")
   }, error = function(e) NA)
-  batching_preserves_errors(mode, transactional, may_bind_null)
+  decide(transactional)
 }
