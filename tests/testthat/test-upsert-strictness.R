@@ -25,7 +25,11 @@ test_that("a too-long value in row 2 raises on a non-transactional engine", {
       # Precondition, not decoration: on a STRICT_ALL_TABLES server MyISAM is batched and
       # raises anyway, so without this the assertions below would pass without ever
       # exercising the fallback they exist to cover.
-      expect_false(upsert_batching_is_safe(con0, tbl)$safe)
+      expect_false(upsert_batching_is_safe(con0, tbl)$safe,
+                   info = paste("This server judges", tbl, "safe to batch, so the fallback these",
+                                "assertions cover is never reached. They need a server whose",
+                                "sql_mode is STRICT_TRANS_TABLES (not STRICT_ALL_TABLES, which",
+                                "covers every engine) -- see docker-compose.test.yml."))
       e <- db_env()
       expect_error(
         upsert_table(.badrow_df(), tbl, keycols = "id", host = e$host, port = e$port, db = e$db,
@@ -49,7 +53,11 @@ test_that("a NULL into NOT NULL in row 2 raises on a non-transactional engine", 
       # Precondition, not decoration: on a STRICT_ALL_TABLES server MyISAM is batched and
       # raises anyway, so without this the assertions below would pass without ever
       # exercising the fallback they exist to cover.
-      expect_false(upsert_batching_is_safe(con0, tbl)$safe)
+      expect_false(upsert_batching_is_safe(con0, tbl)$safe,
+                   info = paste("This server judges", tbl, "safe to batch, so the fallback these",
+                                "assertions cover is never reached. They need a server whose",
+                                "sql_mode is STRICT_TRANS_TABLES (not STRICT_ALL_TABLES, which",
+                                "covers every engine) -- see docker-compose.test.yml."))
       e <- db_env()
       df <- data.frame(id = 1:3, v = c("ok", NA, "ok3"), stringsAsFactors = FALSE)
       expect_error(
@@ -72,7 +80,11 @@ test_that("an out-of-range value in row 2 raises on a non-transactional engine",
       # Precondition, not decoration: on a STRICT_ALL_TABLES server MyISAM is batched and
       # raises anyway, so without this the assertions below would pass without ever
       # exercising the fallback they exist to cover.
-      expect_false(upsert_batching_is_safe(con0, tbl)$safe)
+      expect_false(upsert_batching_is_safe(con0, tbl)$safe,
+                   info = paste("This server judges", tbl, "safe to batch, so the fallback these",
+                                "assertions cover is never reached. They need a server whose",
+                                "sql_mode is STRICT_TRANS_TABLES (not STRICT_ALL_TABLES, which",
+                                "covers every engine) -- see docker-compose.test.yml."))
       e <- db_env()
       df <- data.frame(id = 1:3, n = c(1L, 9999L, 3L))
       expect_error(
@@ -245,7 +257,11 @@ test_that("two rows are enough to need the check -- the boundary, not just the c
       # Precondition, not decoration: on a STRICT_ALL_TABLES server MyISAM is batched and
       # raises anyway, so without this the assertions below would pass without ever
       # exercising the fallback they exist to cover.
-      expect_false(upsert_batching_is_safe(con0, tbl)$safe)
+      expect_false(upsert_batching_is_safe(con0, tbl)$safe,
+                   info = paste("This server judges", tbl, "safe to batch, so the fallback these",
+                                "assertions cover is never reached. They need a server whose",
+                                "sql_mode is STRICT_TRANS_TABLES (not STRICT_ALL_TABLES, which",
+                                "covers every engine) -- see docker-compose.test.yml."))
       e <- db_env()
       df <- data.frame(id = 1:2, v = c("ok", "WAY-TOO-LONG"), stringsAsFactors = FALSE)
       expect_error(
