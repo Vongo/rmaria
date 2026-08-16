@@ -76,9 +76,26 @@ flatten_rowwise <- function(df) {
   # DBI expects for a blob.
   vals <- unlist(
     lapply(df, function(col) {
-      if (is.list(col)) lapply(seq_along(col), function(i) col[i]) else as.list(col)
+      if (is.data.frame(col)) {
+        # A nested data.frame column: seq_along() would walk its COLUMNS, silently yielding the
+        # wrong number of values. Refuse rather than mis-bind.
+        stop("flatten_rowwise: nested data.frame columns are not supported")
+      } else if (is.matrix(col)) {
+        stop("flatten_rowwise: matrix columns are not supported")
+      } else if (is.list(col)) {
+        lapply(seq_along(col), function(i) col[i])
+      } else {
+        as.list(col)
+      }
     }),
     recursive = FALSE, use.names = FALSE)
+  # Checked BEFORE the reindex below, which is the only place it can be caught: that step
+  # forces the result to exactly nr*nc, truncating extras and padding shortfalls with NULL, so
+  # a length assertion afterwards always passes and a mis-bound column writes silently.
+  if (length(vals) != nr * nc) {
+    stop(sprintf("flatten_rowwise: expected %d values from %d rows x %d columns, got %d -- a column is not a plain length-nrow vector",
+                 nr * nc, nr, nc, length(vals)))
+  }
   # vals is column-major: value [r, c] sits at (c - 1) * nr + r. Reading the transpose of the
   # index matrix column-major yields exactly the row-major sequence.
   vals[as.vector(t(matrix(seq_len(nr * nc), nrow = nr)))]

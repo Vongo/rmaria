@@ -70,14 +70,14 @@ upsert_table <- function(table, table_name_in_base, keycols, host="localhost", p
   #
   #  - MySQL caps a prepared statement at 65535 placeholders, so a wide table fits fewer rows
   #    than the caller asked for.
-  #  - A batch also has to fit in max_allowed_packet. This bound applies to the PREVIOUS
-  #    implementation too -- binding a chunk sends all of its data in one packet regardless of
-  #    how many placeholder tuples the SQL carries -- but the multi-row statement text adds
-  #    roughly (2*ncol + 2) bytes per row on top, which lowered the effective ceiling by about
-  #    1%. That was enough to break payloads that previously sat just under the limit
-  #    (measured: 4 cols x 10000 rows at 1670 B/row succeeded before and failed after).
-  #    Sizing the batch to the server's actual limit removes that regression and, incidentally,
-  #    makes oversized payloads work where they used to fail outright.
+  #  - A batch also has to fit in max_allowed_packet, and THIS is new. Per-row execution meant
+  #    only an individual ROW had to fit, so the ceiling was effectively unreachable: measured,
+  #    the previous implementation wrote 4000 rows x 10 KB = 38 MB in one chunk against a 16 MB
+  #    limit without complaint. Batching makes the whole batch one packet, so the ceiling drops
+  #    by roughly a factor of stmt_rows -- not by the ~1% an earlier version of this comment
+  #    claimed, which came from probing only near the boundary where a single row is itself
+  #    oversized and both implementations fail together. Sizing the batch to the server's limit
+  #    restores the old headroom.
   #
   # chunk_size is a batching hint, not something a caller should have to reconcile against the
   # column count, the row width or the server's packet limit -- so sub-split rather than fail.

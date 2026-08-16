@@ -109,14 +109,20 @@ test_that("a chunk boundary does not drop or duplicate rows", {
     df <- data.frame(id = seq_len(n), label = paste0("k", seq_len(n)),
                      n = as.numeric(seq_len(n)), stringsAsFactors = FALSE)
     # chunk_size deliberately does not divide n evenly.
-    upsert_table(df, .mr_tbl, keycols = "id", host = e$host, port = e$port, db = e$db,
-                 user = e$user, password = e$pwd, chunk_size = 60L,
-                 progress_bar = FALSE, nolog = TRUE)
+    # The return value is accumulated ACROSS statements; asserting it here is what catches an
+    # `affected <- ...` that drops the running total (which a single-statement test cannot).
+    affected <- upsert_table(df, .mr_tbl, keycols = "id", host = e$host, port = e$port, db = e$db,
+                             user = e$user, password = e$pwd, chunk_size = 60L,
+                             progress_bar = FALSE, nolog = TRUE)
+    expect_equal(as.integer(affected), n)
     con <- test_con(); on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
-    got <- RMariaDB::dbGetQuery(con, sprintf("SELECT COUNT(*) c, SUM(n) s, MAX(id) m FROM `%s`", .mr_tbl))
-    expect_equal(got$c, n)
-    expect_equal(got$s, sum(as.numeric(seq_len(n))))
-    expect_equal(got$m, n)
+    # Row by row, not aggregates: COUNT/SUM/MAX are order-invariant, so a bug that corrupts
+    # only the chunks AFTER the first (every value present, every value on the wrong row)
+    # passes all three. Verified by mutation -- that bug survives an aggregate-only assertion.
+    got <- RMariaDB::dbGetQuery(con, sprintf("SELECT id, label, n FROM `%s` ORDER BY id", .mr_tbl))
+    expect_equal(got$id, seq_len(n))
+    expect_equal(got$label, paste0("k", seq_len(n)))
+    expect_equal(got$n, as.numeric(seq_len(n)))
   })
 })
 
@@ -237,4 +243,97 @@ test_that("estimate_row_bytes counts character columns in bytes, not characters"
   utf8  <- data.frame(v = strrep("é", 10), stringsAsFactors = FALSE)   # 2 bytes per char
   expect_gt(estimate_row_bytes(utf8), estimate_row_bytes(ascii))
   expect_gte(estimate_row_bytes(data.frame()), 1)
+})
+
+# --- pure unit tests: no DB, so these run even where the integration gate skips ------
+
+test_that("flatten_rowwise emits row-major order and preserves per-value types", {
+  # The single highest-value guard in this file: it pins BOTH the ordering the multi-row
+  # placeholders depend on AND the type preservation the as.list-vs-as.matrix choice buys.
+  expect_identical(
+    flatten_rowwise(data.frame(a = 1:3, b = c("x", "y", "z"), stringsAsFactors = FALSE)),
+    list(1L, "x", 2L, "y", 3L, "z")
+  )
+})
+
+test_that("flatten_rowwise is correct on NON-SQUARE frames", {
+  # A 3x3 fixture cannot catch a transposed matrix(nrow=) argument, because for nr == nc the
+  # two forms are the same matrix. Verified by mutation: the dims-swap passes a 3x3 test.
+  expect_identical(
+    flatten_rowwise(data.frame(a = 1:4, b = 5:8, stringsAsFactors = FALSE)),
+    list(1L, 5L, 2L, 6L, 3L, 7L, 4L, 8L)
+  )
+  expect_identical(
+    flatten_rowwise(data.frame(a = 1:2, b = 3:4, c = 5:6)),
+    list(1L, 3L, 5L, 2L, 4L, 6L)
+  )
+})
+
+test_that("flatten_rowwise handles degenerate shapes", {
+  expect_identical(flatten_rowwise(data.frame(a = 1L)), list(1L))
+  expect_identical(flatten_rowwise(data.frame()), list())
+  expect_identical(flatten_rowwise(data.frame(a = integer(0))), list())
+})
+
+test_that("flatten_rowwise refuses a column that is not a plain length-nrow vector", {
+  # Matrix and nested-data.frame columns produce the wrong VALUE count while ncol() still
+  # counts them as one column. The reindex would then truncate or NULL-pad to the right
+  # length, so the mis-binding is invisible to any assertion made afterwards.
+  df <- data.frame(id = 1:2)
+  df$m <- matrix(c(100, 200, 300, 400), nrow = 2)
+  expect_error(flatten_rowwise(df), "matrix columns are not supported")
+
+  df2 <- data.frame(id = 1:3)
+  df2$nested <- data.frame(x = 1:3, y = 4:6)
+  expect_error(flatten_rowwise(df2), "nested data.frame columns are not supported")
+})
+
+test_that("upsert_batch_rows never exceeds the placeholder cap", {
+  # Pins the CHOSEN batch size rather than the outcome: expect_no_error + COUNT(*) cannot tell
+  # "sub-split correctly" from "never batched at all".
+  wide <- as.data.frame(matrix(1, nrow = 10, ncol = 70))
+  expect_equal(upsert_batch_rows(wide, 30000L, con = NULL, nolog = TRUE), 936L)   # 65535 %/% 70
+  three <- as.data.frame(matrix(1, nrow = 10, ncol = 3))
+  expect_equal(upsert_batch_rows(three, 30000L, con = NULL, nolog = TRUE), 21845L) # 65535 %/% 3
+  one <- as.data.frame(matrix(1, nrow = 10, ncol = 1))
+  expect_equal(upsert_batch_rows(one, 30000L, con = NULL, nolog = TRUE), 30000L)   # hint wins
+  expect_equal(upsert_batch_rows(three, 5L, con = NULL, nolog = TRUE), 5L)
+})
+
+test_that("build_upsert_sql rejects a zero n_rows with a real message", {
+  # A bare expect_error() passed against main, which has no n_rows parameter at all -- the
+  # error was "unused argument". Pinning the message makes the assertion mean something.
+  expect_error(build_upsert_sql("t", c("a", "b"), "a", n_rows = 0L), "positive integer")
+  expect_error(build_upsert_sql("t", c("a", "b"), "a", n_rows = NA_integer_), "positive integer")
+  expect_error(build_upsert_sql("t", c("a", "b"), "a", n_rows = c(2L, 3L)), "positive integer")
+})
+
+test_that("a keys-only table batches as INSERT IGNORE with one tuple per row", {
+  expect_equal(
+    build_upsert_sql("t", "id", "id", n_rows = 3L),
+    "INSERT IGNORE INTO `t` (`id`) VALUES (?),(?),(?)"
+  )
+})
+
+test_that("a failure in a later chunk rolls back the earlier ones", {
+  # The pre-existing atomicity test uses a 2-row frame, which this change turns into ONE
+  # statement -- and a single statement is atomic in MariaDB by itself, so that test now passes
+  # even with dbWithTransaction deleted (verified by mutation). Forcing the failure across a
+  # chunk boundary is what actually requires the transaction.
+  tbl <- "rmaria_multichunk_rollback"
+  with_test_table(
+    sprintf("CREATE TABLE `%s` (id INT UNSIGNED NOT NULL, v VARCHAR(8) NOT NULL, PRIMARY KEY (id))", tbl),
+    tbl, {
+      e <- db_env()
+      df <- data.frame(id = 1:4, v = c("a", "b", "c", NA), stringsAsFactors = FALSE)
+      expect_error(
+        upsert_table(df, tbl, keycols = "id", host = e$host, port = e$port, db = e$db,
+                     user = e$user, password = e$pwd, chunk_size = 2L,
+                     progress_bar = FALSE, nolog = TRUE)
+      )
+      con <- test_con(); on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+      # Rows 1-2 committed in the first statement must NOT survive the failure of the second.
+      got <- RMariaDB::dbGetQuery(con, sprintf("SELECT COUNT(*) c FROM `%s`", tbl))
+      expect_equal(got$c, 0)
+    })
 })
