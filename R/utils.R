@@ -188,11 +188,22 @@ batching_preserves_errors <- function(sql_mode, transactional) {
   isTRUE(transactional)
 }
 
+# One scalar out of a query result, or NA if the server answered with a shape we did not ask
+# for. `df$col[1]` is not safe to test with is.na(): a missing column gives NULL, NULL[1] is
+# NULL, and `if (is.na(NULL))` is a hard error rather than a verdict -- which would take down an
+# upsert that had not yet issued a single statement.
+.scalar_or_na <- function(df, col) {
+  if (!is.data.frame(df)) return(NA)
+  v <- df[[col]]
+  if (is.null(v) || length(v) == 0L) NA else v[1]
+}
+
 # Asks the server the two questions batching_preserves_errors needs. Any failure to answer is
 # reported as unsafe rather than assumed away.
 upsert_batching_is_safe <- function(con, table_name_in_base) {
-  mode <- tryCatch(RMariaDB::dbGetQuery(con, "SELECT @@session.sql_mode AS m")$m[1],
-                   error = function(e) NA_character_)
+  mode <- tryCatch(.scalar_or_na(
+    RMariaDB::dbGetQuery(con, "SELECT @@session.sql_mode AS m"), "m"),
+    error = function(e) NA)
   if (is.na(mode)) return(FALSE)
   if (grepl("STRICT_ALL_TABLES", toupper(mode), fixed = TRUE)) return(TRUE)
   transactional <- tryCatch({
@@ -201,7 +212,10 @@ upsert_batching_is_safe <- function(con, table_name_in_base) {
       "JOIN information_schema.ENGINES e ON e.ENGINE = tb.ENGINE",
       "WHERE tb.TABLE_SCHEMA = DATABASE() AND tb.TABLE_NAME = ?"),
       params = list(table_name_in_base))
-    if (nrow(eng) == 0L) NA else identical(toupper(eng$t[1]), "YES")
+    # A view has a NULL engine and so joins to nothing; a missing table returns no row. Both
+    # mean "we do not know", which is unsafe.
+    t <- .scalar_or_na(eng, "t")
+    if (is.na(t)) NA else identical(toupper(t), "YES")
   }, error = function(e) NA)
   batching_preserves_errors(mode, transactional)
 }

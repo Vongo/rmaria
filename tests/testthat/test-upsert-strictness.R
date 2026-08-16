@@ -174,3 +174,14 @@ test_that("MyRocks is judged safe, and behaves that way", {
       expect_equal(as.numeric(got$c), 0)   # transactional: rolled back, nothing truncated
     })
 })
+
+# --- the scalar extractor that keeps a malformed answer from becoming a crash ------
+
+test_that("a scalar is taken from a result only when the result actually has one", {
+  expect_equal(.scalar_or_na(data.frame(m = "STRICT_ALL_TABLES"), "m"), "STRICT_ALL_TABLES")
+  expect_equal(.scalar_or_na(data.frame(m = c("a", "b")), "m"), "a")
+  # The shapes that used to make `is.na(df$col[1])` a length-zero condition, i.e. an error.
+  expect_true(is.na(.scalar_or_na(data.frame(other = 1), "m")))
+  expect_true(is.na(.scalar_or_na(data.frame(m = character(0)), "m")))
+  expect_true(is.na(.scalar_or_na(NULL, "m")))
+})
