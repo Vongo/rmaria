@@ -15,13 +15,21 @@ build_insert_sql <- function(table, cols, ignore = TRUE) {
 # Single-row INSERT ... ON DUPLICATE KEY UPDATE col = COALESCE(VALUES(col), col)
 # for every non-key column (COALESCE preserves "don't overwrite with NULL").
 # Keys-only tables have nothing to update -> INSERT IGNORE.
-build_upsert_sql <- function(table, cols, keycols) {
+# n_rows emits that many placeholder tuples in one statement, so a batch of rows can be sent as
+# a single round trip instead of one per row. Defaults to 1, which reproduces the previous
+# output byte for byte.
+build_upsert_sql <- function(table, cols, keycols, n_rows = 1L) {
   if (length(cols) == 0L) stop("build_upsert_sql: 'cols' must be non-empty")
   if (length(keycols) == 0L) stop("build_upsert_sql: 'keycols' must be non-empty")
+  n_rows <- suppressWarnings(as.integer(n_rows))
+  if (length(n_rows) != 1L || is.na(n_rows) || n_rows < 1L) {
+    stop("build_upsert_sql: 'n_rows' must be a single positive integer")
+  }
   non_key <- setdiff(cols, keycols)
+  tuple <- paste0("(", paste(rep("?", length(cols)), collapse = ","), ")")
   base <- paste0("INSERT ", if (length(non_key) == 0L) "IGNORE " else "", "INTO ",
                  quote_ident(table), " (", paste(quote_ident(cols), collapse = ","),
-                 ") VALUES (", paste(rep("?", length(cols)), collapse = ","), ")")
+                 ") VALUES ", paste(rep(tuple, n_rows), collapse = ","))
   if (length(non_key) == 0L) return(base)
   set_clause <- paste(vapply(non_key, function(nm) {
     qc <- quote_ident(nm); paste0(qc, "=COALESCE(VALUES(", qc, "),", qc, ")")

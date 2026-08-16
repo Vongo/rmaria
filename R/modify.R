@@ -55,19 +55,53 @@ upsert_table <- function(table, table_name_in_base, keycols, host="localhost", p
   table <- normalize_table_utf8(table, nolog=nolog)
   table[] <- lapply(table, function(col) { if (is.factor(col)) col <- as.character(col); if (is.numeric(col)) col[!is.finite(col)] <- NA; col })
   cols <- colnames(table)
-  sql  <- build_upsert_sql(table_name_in_base, cols, keycols)
   if (is.na(chunk_size)) chunk_size <- 10000L
   chunk_size <- as.integer(max(1L, min(chunk_size, nrow(table))))
-  n_iter <- as.integer(ceiling(nrow(table) / chunk_size))
+  # One statement per batch, not one per row.
+  #
+  # dbExecute(sql, params = <list of column vectors>) binds the vectors and runs the single-row
+  # statement once per row, so a chunk cost as many round trips as it had rows. On a local
+  # socket that is invisible; across any real link it is the entire runtime -- a 54,525-row
+  # upsert to a remote host measured 23 minutes (~40 rows/sec), against seconds locally.
+  # Emitting one statement carrying N placeholder tuples makes a batch one round trip, and
+  # every value stays bound, so no literal interpolation or escaping surface is introduced.
+  #
+  # Two ceilings bound a batch, and neither is the caller's business:
+  #
+  #  - MySQL caps a prepared statement at 65535 placeholders, so a wide table fits fewer rows
+  #    than the caller asked for.
+  #  - A batch also has to fit in max_allowed_packet, and THIS is new. Per-row execution meant
+  #    only an individual ROW had to fit, so the ceiling was effectively unreachable: measured,
+  #    the previous implementation wrote 4000 rows x 10 KB = 38 MB in one chunk against a 16 MB
+  #    limit without complaint. Batching makes the whole batch one packet, so the ceiling drops
+  #    by roughly a factor of stmt_rows -- not by the ~1% an earlier version of this comment
+  #    claimed, which came from probing only near the boundary where a single row is itself
+  #    oversized and both implementations fail together. Sizing the batch to the server's limit
+  #    restores the old headroom.
+  #
+  # chunk_size is a batching hint, not something a caller should have to reconcile against the
+  # column count, the row width or the server's packet limit -- so sub-split rather than fail.
   con <- .maria_connect(host, port, db, user, password)
   on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+  batches <- upsert_batches(table, chunk_size, con = con, nolog = nolog)
+  n_iter <- length(batches)
+  # Batch sizes vary when row widths do, so SQL is built once per DISTINCT size and reused.
+  sql_cache <- new.env(parent = emptyenv())
+  sql_for <- function(k) {
+    key <- as.character(k)
+    if (is.null(sql_cache[[key]])) {
+      sql_cache[[key]] <- build_upsert_sql(table_name_in_base, cols, keycols, n_rows = k)
+    }
+    sql_cache[[key]]
+  }
   pb <- if (progress_bar) create_pb(n_iter, bar_style="pc", time_style="cd") else NULL
   affected <- 0L
   tryCatch(
     DBI::dbWithTransaction(con, {
       for (i in seq_len(n_iter)) {
-        rows <- ((i - 1L) * chunk_size + 1L):min(i * chunk_size, nrow(table))
-        affected <- affected + RMariaDB::dbExecute(con, sql, params = unname(as.list(table[rows, , drop = FALSE])))
+        rows <- batches[[i]]
+        affected <- affected + RMariaDB::dbExecute(
+          con, sql_for(length(rows)), params = flatten_rowwise(table[rows, , drop = FALSE]))
         if (progress_bar) update_pb(pb, i)
       }
     }),
