@@ -55,10 +55,26 @@ upsert_table <- function(table, table_name_in_base, keycols, host="localhost", p
   table <- normalize_table_utf8(table, nolog=nolog)
   table[] <- lapply(table, function(col) { if (is.factor(col)) col <- as.character(col); if (is.numeric(col)) col[!is.finite(col)] <- NA; col })
   cols <- colnames(table)
-  sql  <- build_upsert_sql(table_name_in_base, cols, keycols)
   if (is.na(chunk_size)) chunk_size <- 10000L
   chunk_size <- as.integer(max(1L, min(chunk_size, nrow(table))))
-  n_iter <- as.integer(ceiling(nrow(table) / chunk_size))
+  # One statement per batch, not one per row.
+  #
+  # dbExecute(sql, params = <list of column vectors>) binds the vectors and runs the single-row
+  # statement once per row, so a chunk cost as many round trips as it had rows. On a local
+  # socket that is invisible; across any real link it is the entire runtime -- a 54,525-row
+  # upsert to a remote host measured 23 minutes (~40 rows/sec), against seconds locally.
+  # Emitting one statement carrying N placeholder tuples makes a batch one round trip, and
+  # every value stays bound, so no literal interpolation or escaping surface is introduced.
+  #
+  # MySQL caps a prepared statement at 65535 placeholders, which for a wide table is fewer rows
+  # than the caller asked for. Sub-split rather than fail: chunk_size is a batching hint, not
+  # something a caller should have to reconcile against the column count.
+  stmt_rows <- as.integer(max(1L, min(chunk_size, .UPSERT_MAX_PLACEHOLDERS %/% length(cols))))
+  n_iter <- as.integer(ceiling(nrow(table) / stmt_rows))
+  sql_full <- build_upsert_sql(table_name_in_base, cols, keycols, n_rows = stmt_rows)
+  tail_rows <- nrow(table) - (n_iter - 1L) * stmt_rows
+  sql_tail <- if (tail_rows == stmt_rows) sql_full else
+    build_upsert_sql(table_name_in_base, cols, keycols, n_rows = tail_rows)
   con <- .maria_connect(host, port, db, user, password)
   on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
   pb <- if (progress_bar) create_pb(n_iter, bar_style="pc", time_style="cd") else NULL
@@ -66,8 +82,10 @@ upsert_table <- function(table, table_name_in_base, keycols, host="localhost", p
   tryCatch(
     DBI::dbWithTransaction(con, {
       for (i in seq_len(n_iter)) {
-        rows <- ((i - 1L) * chunk_size + 1L):min(i * chunk_size, nrow(table))
-        affected <- affected + RMariaDB::dbExecute(con, sql, params = unname(as.list(table[rows, , drop = FALSE])))
+        rows <- ((i - 1L) * stmt_rows + 1L):min(i * stmt_rows, nrow(table))
+        sql_i <- if (length(rows) == stmt_rows) sql_full else sql_tail
+        affected <- affected + RMariaDB::dbExecute(
+          con, sql_i, params = flatten_rowwise(table[rows, , drop = FALSE]))
         if (progress_bar) update_pb(pb, i)
       }
     }),

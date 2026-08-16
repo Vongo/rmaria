@@ -54,3 +54,22 @@ update_pb <- function(pb, index) {
 	cat(paste("\r", bar, time, sep = ""))
 	if (progress >= 1) cat("\n")
 }
+
+
+# Prepared statements in MySQL/MariaDB accept at most 65535 placeholders.
+.UPSERT_MAX_PLACEHOLDERS <- 65535L
+
+# A data.frame to a flat list of scalars in ROW-MAJOR order, which is the order a multi-row
+# "VALUES (?,?),(?,?)" statement binds its placeholders.
+#
+# Element types are preserved per value (as.list on each column), so integers stay integers and
+# NA stays a typed NA that binds as NULL -- an as.matrix() flattening would coerce a mixed-type
+# frame to character and silently change what gets written.
+flatten_rowwise <- function(df) {
+  nr <- nrow(df); nc <- ncol(df)
+  if (nr == 0L || nc == 0L) return(list())
+  vals <- unlist(lapply(df, as.list), recursive = FALSE, use.names = FALSE)
+  # vals is column-major: value [r, c] sits at (c - 1) * nr + r. Reading the transpose of the
+  # index matrix column-major yields exactly the row-major sequence.
+  vals[as.vector(t(matrix(seq_len(nr * nc), nrow = nr)))]
+}
