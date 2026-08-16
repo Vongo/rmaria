@@ -152,3 +152,43 @@ test_that("the empty-table and bad-keycols contracts are unchanged", {
     "keycols not found"
   )
 })
+
+test_that("a BLOB column round-trips byte-identically through a multi-row batch", {
+  # Regression: a raw column arrives as a LIST column, and as.list() leaves a list unchanged
+  # where it splits an atomic vector. Flattening then handed each placeholder the whole column
+  # instead of one value ("Parameter 2 does not have length 1") -- a hard failure on input the
+  # package explicitly supports (normalize_table_utf8 branches on is.list/is.raw).
+  tbl <- "rmaria_blob_multirow"
+  with_test_table(
+    sprintf("CREATE TABLE `%s` (id INT UNSIGNED NOT NULL, payload BLOB NULL, PRIMARY KEY (id))", tbl),
+    tbl, {
+      e <- db_env()
+      payloads <- list(as.raw(c(1, 2, 3)), as.raw(c(255, 0, 128)), as.raw(9))
+      df <- data.frame(id = 1:3)
+      df$payload <- payloads
+      upsert_table(df, tbl, keycols = "id", host = e$host, port = e$port, db = e$db,
+                   user = e$user, password = e$pwd, progress_bar = FALSE, nolog = TRUE)
+      con <- test_con(); on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+      got <- RMariaDB::dbGetQuery(con, sprintf("SELECT id, payload FROM `%s` ORDER BY id", tbl))
+      expect_equal(got$id, 1:3)
+      # Byte-identical, and on the right rows -- not merely "three blobs arrived".
+      expect_equal(lapply(got$payload, as.integer), lapply(payloads, as.integer))
+    })
+})
+
+test_that("a mixed frame carrying both atomic and blob columns binds both correctly", {
+  tbl <- "rmaria_blob_mixed"
+  with_test_table(
+    sprintf("CREATE TABLE `%s` (id INT UNSIGNED NOT NULL, label VARCHAR(16) NULL, payload BLOB NULL, PRIMARY KEY (id))", tbl),
+    tbl, {
+      e <- db_env()
+      df <- data.frame(id = 1:2, label = c("a", "b"), stringsAsFactors = FALSE)
+      df$payload <- list(as.raw(c(7, 8)), as.raw(c(9)))
+      upsert_table(df, tbl, keycols = "id", host = e$host, port = e$port, db = e$db,
+                   user = e$user, password = e$pwd, progress_bar = FALSE, nolog = TRUE)
+      con <- test_con(); on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+      got <- RMariaDB::dbGetQuery(con, sprintf("SELECT id, label, payload FROM `%s` ORDER BY id", tbl))
+      expect_equal(got$label, c("a", "b"))
+      expect_equal(lapply(got$payload, as.integer), list(c(7L, 8L), 9L))
+    })
+})

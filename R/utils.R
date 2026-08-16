@@ -68,7 +68,17 @@ update_pb <- function(pb, index) {
 flatten_rowwise <- function(df) {
   nr <- nrow(df); nc <- ncol(df)
   if (nr == 0L || nc == 0L) return(list())
-  vals <- unlist(lapply(df, as.list), recursive = FALSE, use.names = FALSE)
+  # as.list() on an ATOMIC column yields length-1 scalars, but on a LIST column (how a BLOB /
+  # raw column arrives -- see normalize_table_utf8, which explicitly handles is.list/is.raw)
+  # it returns the list unchanged. unlist(recursive=FALSE) would then strip the wrapper and
+  # hand each placeholder a bare raw vector of length nrow instead of one value, which DBI
+  # rejects with "Parameter N does not have length 1". col[i] keeps the single-element list
+  # DBI expects for a blob.
+  vals <- unlist(
+    lapply(df, function(col) {
+      if (is.list(col)) lapply(seq_along(col), function(i) col[i]) else as.list(col)
+    }),
+    recursive = FALSE, use.names = FALSE)
   # vals is column-major: value [r, c] sits at (c - 1) * nr + r. Reading the transpose of the
   # index matrix column-major yields exactly the row-major sequence.
   vals[as.vector(t(matrix(seq_len(nr * nc), nrow = nr)))]
