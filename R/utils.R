@@ -180,12 +180,27 @@ upsert_batches <- function(table, chunk_size, con, nolog = FALSE) {
 # which is why a MyISAM table under the default sql_mode is exposed. Anything else, including an
 # engine we could not identify, is treated as unsafe.
 #
+# On a server with no STRICT_* at all, per-row execution does not raise either: an over-long
+# string or an out-of-range number is coerced with a warning whichever way it is sent (measured
+# on MariaDB 11 with sql_mode=''). Exactly one class still differs, and the manual is explicit
+# about it -- NULL into a NOT NULL column errors for a single-row INSERT and stores the implicit
+# default for a multi-row one. So there, falling back is worth its 50x only when the data can
+# actually bind a NULL; `may_bind_null` says whether it can.
+#
 # Pure so the decision is testable without a server: `transactional` is TRUE/FALSE/NA.
-batching_preserves_errors <- function(sql_mode, transactional) {
+# `may_bind_null` is only forced on the non-strict branch, so passing an expression that scans
+# the frame costs nothing on a strict server.
+batching_preserves_errors <- function(sql_mode, transactional, may_bind_null = TRUE) {
   mode <- if (length(sql_mode) == 0L || is.na(sql_mode[1])) "" else toupper(as.character(sql_mode[1]))
   if (grepl("STRICT_ALL_TABLES", mode, fixed = TRUE)) return(TRUE)
-  if (!grepl("STRICT_TRANS_TABLES", mode, fixed = TRUE)) return(FALSE)
+  if (!grepl("STRICT_TRANS_TABLES", mode, fixed = TRUE)) return(isFALSE(may_bind_null))
   isTRUE(transactional)
+}
+
+# Can any value in this frame reach the server as NULL? An NA does; so does a list column (the
+# shape blob/raw columns arrive in), whose elements can be NULL individually.
+.frame_may_bind_null <- function(table) {
+  any(vapply(table, function(col) is.list(col) || anyNA(col), logical(1)))
 }
 
 # One scalar out of a query result, or NA if the server answered with a shape we did not ask
@@ -200,7 +215,7 @@ batching_preserves_errors <- function(sql_mode, transactional) {
 
 # Asks the server the two questions batching_preserves_errors needs. Any failure to answer is
 # reported as unsafe rather than assumed away.
-upsert_batching_is_safe <- function(con, table_name_in_base) {
+upsert_batching_is_safe <- function(con, table_name_in_base, may_bind_null = TRUE) {
   mode <- tryCatch(.scalar_or_na(
     RMariaDB::dbGetQuery(con, "SELECT @@session.sql_mode AS m"), "m"),
     error = function(e) NA)
@@ -217,5 +232,5 @@ upsert_batching_is_safe <- function(con, table_name_in_base) {
     t <- .scalar_or_na(eng, "t")
     if (is.na(t)) NA else identical(toupper(t), "YES")
   }, error = function(e) NA)
-  batching_preserves_errors(mode, transactional)
+  batching_preserves_errors(mode, transactional, may_bind_null)
 }

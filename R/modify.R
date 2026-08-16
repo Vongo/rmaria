@@ -90,7 +90,9 @@ upsert_table <- function(table, table_name_in_base, keycols, host="localhost", p
   # A one-row frame has no "row 2+", so the question does not arise and the check's two lookups
   # would be pure latency on the smallest calls. (It still enters upsert_batches below, which
   # asks the server for max_allowed_packet -- cheaper, not lookup-free.)
-  batched <- nrow(table) == 1L || upsert_batching_is_safe(con, table_name_in_base)
+  batched <- nrow(table) == 1L ||
+    upsert_batching_is_safe(con, table_name_in_base,
+                            may_bind_null = .frame_may_bind_null(table))
   batches <- if (batched) {
     upsert_batches(table, chunk_size, con = con, nolog = nolog)
   } else {

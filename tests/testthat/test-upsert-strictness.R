@@ -113,9 +113,17 @@ test_that("batching is judged safe only when strictness actually applies", {
   # STRICT_TRANS_TABLES only reaches transactional tables.
   expect_true(batching_preserves_errors("STRICT_TRANS_TABLES", TRUE))
   expect_false(batching_preserves_errors("STRICT_TRANS_TABLES", FALSE))
-  # No strict mode at all: never safe.
-  expect_false(batching_preserves_errors("", TRUE))
+  # No strict mode at all: the server coerces invalid values whichever way they are sent, so
+  # per-row buys back exactly one class -- NULL into NOT NULL -- and only if a NULL is bound.
+  expect_false(batching_preserves_errors("", TRUE))                          # may bind NULL
   expect_false(batching_preserves_errors("NO_ZERO_DATE", TRUE))
+  expect_true(batching_preserves_errors("", TRUE, may_bind_null = FALSE))    # cannot
+  expect_true(batching_preserves_errors("", FALSE, may_bind_null = FALSE))   # engine is moot
+  # Conservative default, and an unknown answer is not a FALSE.
+  expect_false(batching_preserves_errors("", TRUE, may_bind_null = NA))
+  # may_bind_null is irrelevant wherever strict mode actually applies.
+  expect_true(batching_preserves_errors("STRICT_TRANS_TABLES", TRUE, may_bind_null = TRUE))
+  expect_false(batching_preserves_errors("STRICT_TRANS_TABLES", FALSE, may_bind_null = FALSE))
   # Unknown engine (lookup failed) is treated as unsafe.
   expect_false(batching_preserves_errors("STRICT_TRANS_TABLES", NA))
 })
@@ -223,4 +231,17 @@ test_that("two rows are enough to need the check -- the boundary, not just the c
       expect_equal(nrow(got), 0L)   # not stored as "WAY"
     })
 })
+
+
+test_that("a frame is judged to bind NULL only when it actually can", {
+  expect_false(.frame_may_bind_null(data.frame(id = 1:3, v = c("a", "b", "c"))))
+  expect_true(.frame_may_bind_null(data.frame(id = 1:3, v = c("a", NA, "c"))))
+  expect_true(.frame_may_bind_null(data.frame(id = c(1L, NA, 3L))))
+  # A blob/raw column arrives as a list whose elements can be NULL one by one, which anyNA()
+  # does not see -- so any list column counts as "can bind NULL".
+  df <- data.frame(id = 1:2)
+  df$blob <- list(as.raw(1:3), NULL)
+  expect_true(.frame_may_bind_null(df))
+})
+
 
