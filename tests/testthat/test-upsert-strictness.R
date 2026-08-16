@@ -185,3 +185,42 @@ test_that("a scalar is taken from a result only when the result actually has one
   expect_true(is.na(.scalar_or_na(data.frame(m = character(0)), "m")))
   expect_true(is.na(.scalar_or_na(NULL, "m")))
 })
+test_that("the one-row short-circuit still raises on a bad value", {
+  # The short-circuit skips the safety lookups on the grounds that a single-row statement has no
+  # "row 2+" to be downgraded. Pin that reasoning: one bad row must still raise on MyISAM.
+  tbl <- "rmaria_strict_one"
+  with_test_table(
+    sprintf("CREATE TABLE `%s` (id INT UNSIGNED NOT NULL, v VARCHAR(3), PRIMARY KEY (id)) ENGINE=MyISAM", tbl),
+    tbl, {
+      e <- db_env()
+      expect_error(
+        upsert_table(data.frame(id = 1L, v = "WAY-TOO-LONG", stringsAsFactors = FALSE), tbl,
+                     keycols = "id", host = e$host, port = e$port, db = e$db,
+                     user = e$user, password = e$pwd, progress_bar = FALSE, nolog = TRUE)
+      )
+      con <- test_con(); on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+      got <- RMariaDB::dbGetQuery(con, sprintf("SELECT COUNT(*) c FROM `%s`", tbl))
+      expect_equal(as.numeric(got$c), 0)
+    })
+})
+
+test_that("two rows are enough to need the check -- the boundary, not just the comfortable case", {
+  # Every other non-transactional test here uses 3 or 5 rows, so widening the short-circuit from
+  # `== 1L` to `<= 2L` would pass the whole suite while silently reopening the bug for 2-row
+  # frames. This is the case that kills that mutant.
+  tbl <- "rmaria_strict_two"
+  with_test_table(
+    sprintf("CREATE TABLE `%s` (id INT UNSIGNED NOT NULL, v VARCHAR(3), PRIMARY KEY (id)) ENGINE=MyISAM", tbl),
+    tbl, {
+      e <- db_env()
+      df <- data.frame(id = 1:2, v = c("ok", "WAY-TOO-LONG"), stringsAsFactors = FALSE)
+      expect_error(
+        upsert_table(df, tbl, keycols = "id", host = e$host, port = e$port, db = e$db,
+                     user = e$user, password = e$pwd, progress_bar = FALSE, nolog = TRUE)
+      )
+      con <- test_con(); on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+      got <- RMariaDB::dbGetQuery(con, sprintf("SELECT v FROM `%s` WHERE id = 2", tbl))
+      expect_equal(nrow(got), 0L)   # not stored as "WAY"
+    })
+})
+
