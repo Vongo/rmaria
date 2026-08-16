@@ -192,3 +192,49 @@ test_that("a mixed frame carrying both atomic and blob columns binds both correc
       expect_equal(lapply(got$payload, as.integer), list(c(7L, 8L), 9L))
     })
 })
+
+test_that("a payload larger than max_allowed_packet is split rather than rejected", {
+  # Regression + improvement. Binding a chunk sends all of its data in one packet under BOTH
+  # implementations, so this ceiling is not new -- but the multi-row statement text adds
+  # ~(2*ncol + 2) bytes per row on top, which lowered the effective limit by ~1% and broke
+  # payloads sitting just under it (measured: 4 cols x 10000 rows at 1670 B/row worked before,
+  # failed after). Sizing the batch to the server's own limit removes that band, and makes
+  # payloads that never fit before work now.
+  tbl <- "rmaria_packet_split"
+  with_test_table(
+    sprintf("CREATE TABLE `%s` (id INT UNSIGNED NOT NULL, a VARCHAR(12), b VARCHAR(12), v LONGTEXT, PRIMARY KEY (id))", tbl),
+    tbl, {
+      e <- db_env()
+      con <- test_con(); on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+      limit <- as.numeric(RMariaDB::dbGetQuery(con, "SELECT @@max_allowed_packet p")$p[1])
+      # ~1.5x the packet limit in one call, at the default chunk_size.
+      width <- 1700L
+      n <- as.integer(ceiling(limit * 1.5 / width))
+      df <- data.frame(id = seq_len(n), a = "aa", b = "bb", v = strrep("x", width),
+                       stringsAsFactors = FALSE)
+      expect_no_error(
+        upsert_table(df, tbl, keycols = "id", host = e$host, port = e$port, db = e$db,
+                     user = e$user, password = e$pwd, progress_bar = FALSE, nolog = TRUE)
+      )
+      got <- RMariaDB::dbGetQuery(con, sprintf("SELECT COUNT(*) c, MIN(LENGTH(v)) mn, MAX(LENGTH(v)) mx FROM `%s`", tbl))
+      expect_equal(got$c, n)
+      expect_equal(got$mn, width)   # values intact, not truncated by the split
+      expect_equal(got$mx, width)
+    })
+})
+
+test_that("upsert_batch_rows respects whichever ceiling binds first", {
+  con <- structure(list(), class = "fake")   # never queried: the estimator short-circuits below
+  # Narrow frame, small chunk_size -> the caller's hint wins.
+  narrow <- data.frame(id = 1:10, v = 1)
+  expect_equal(upsert_batch_rows(narrow, 5L, con = NULL, nolog = TRUE), 5L)
+  # Never returns 0, whatever the inputs.
+  expect_gte(upsert_batch_rows(narrow, 1L, con = NULL, nolog = TRUE), 1L)
+})
+
+test_that("estimate_row_bytes counts character columns in bytes, not characters", {
+  ascii <- data.frame(v = strrep("x", 10), stringsAsFactors = FALSE)
+  utf8  <- data.frame(v = strrep("é", 10), stringsAsFactors = FALSE)   # 2 bytes per char
+  expect_gt(estimate_row_bytes(utf8), estimate_row_bytes(ascii))
+  expect_gte(estimate_row_bytes(data.frame()), 1)
+})

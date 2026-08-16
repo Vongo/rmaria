@@ -66,17 +66,29 @@ upsert_table <- function(table, table_name_in_base, keycols, host="localhost", p
   # Emitting one statement carrying N placeholder tuples makes a batch one round trip, and
   # every value stays bound, so no literal interpolation or escaping surface is introduced.
   #
-  # MySQL caps a prepared statement at 65535 placeholders, which for a wide table is fewer rows
-  # than the caller asked for. Sub-split rather than fail: chunk_size is a batching hint, not
-  # something a caller should have to reconcile against the column count.
-  stmt_rows <- as.integer(max(1L, min(chunk_size, .UPSERT_MAX_PLACEHOLDERS %/% length(cols))))
+  # Two ceilings bound a batch, and neither is the caller's business:
+  #
+  #  - MySQL caps a prepared statement at 65535 placeholders, so a wide table fits fewer rows
+  #    than the caller asked for.
+  #  - A batch also has to fit in max_allowed_packet. This bound applies to the PREVIOUS
+  #    implementation too -- binding a chunk sends all of its data in one packet regardless of
+  #    how many placeholder tuples the SQL carries -- but the multi-row statement text adds
+  #    roughly (2*ncol + 2) bytes per row on top, which lowered the effective ceiling by about
+  #    1%. That was enough to break payloads that previously sat just under the limit
+  #    (measured: 4 cols x 10000 rows at 1670 B/row succeeded before and failed after).
+  #    Sizing the batch to the server's actual limit removes that regression and, incidentally,
+  #    makes oversized payloads work where they used to fail outright.
+  #
+  # chunk_size is a batching hint, not something a caller should have to reconcile against the
+  # column count, the row width or the server's packet limit -- so sub-split rather than fail.
+  con <- .maria_connect(host, port, db, user, password)
+  on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+  stmt_rows <- upsert_batch_rows(table, chunk_size, con = con, nolog = nolog)
   n_iter <- as.integer(ceiling(nrow(table) / stmt_rows))
   sql_full <- build_upsert_sql(table_name_in_base, cols, keycols, n_rows = stmt_rows)
   tail_rows <- nrow(table) - (n_iter - 1L) * stmt_rows
   sql_tail <- if (tail_rows == stmt_rows) sql_full else
     build_upsert_sql(table_name_in_base, cols, keycols, n_rows = tail_rows)
-  con <- .maria_connect(host, port, db, user, password)
-  on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
   pb <- if (progress_bar) create_pb(n_iter, bar_style="pc", time_style="cd") else NULL
   affected <- 0L
   tryCatch(
