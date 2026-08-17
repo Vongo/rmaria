@@ -8,7 +8,13 @@ services:
       MARIADB_DATABASE: rmaria_test
     ports:
       - "3306:3306"
-    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    # sql_mode is pinned, not inherited from the image default, because the strictness tests are
+    # written against a specific one: STRICT_TRANS_TABLES makes InnoDB safe to batch and MyISAM
+    # not, which is the distinction they exist to prove. Under STRICT_ALL_TABLES they would pass
+    # while never reaching the fallback. NO_ENGINE_SUBSTITUTION is load-bearing too -- without
+    # it a `ENGINE=MyISAM` test table can be silently created as InnoDB.
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci",
+              "--sql-mode=STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"]
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 3s
