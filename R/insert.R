@@ -5,41 +5,125 @@
 #' @param table_name_in_base table in \code{db} to insert data into
 #' @param preface_queries character vector of queries you want to apply before, typically setting session variables.
 #' @param split_threshold integer, number of rows to split the data into smaller groups. Default is 1e5.
-#' @param use_file logical; if TRUE, enables the load_data_local_infile flag on the connection (needed for some server configs). Default FALSE.
+#' @param use_file logical; if TRUE, enables the load_data_local_infile flag on the connection (needed for some server configs). Default FALSE. \strong{Requires the \code{readr} package}: RMariaDB delegates the temp-file write to it, so on an installation without \code{readr} this path errors with \code{"`load_data_local_infile = TRUE` requires the readr package"} before reaching the server. It is under Suggests rather than Imports because it is needed only for this one argument.
 #' @keywords MariaDB insert
+#' @return (invisibly) the number of rows written, which on success equals \code{nrow(table)}.
+#'   This differs from \code{insert_table}, which returns the affected count and can report fewer
+#'   rows than supplied when \code{ignore=TRUE} skips duplicates. \code{insert_table_local} has no
+#'   IGNORE path -- a duplicate key raises rather than being skipped -- so a successful call
+#'   \strong{accepted} every row it was given. That is a count of rows accepted, not a guarantee
+#'   that every row's values survived intact: see the \code{use_file} warning below for a
+#'   documented case where a row is counted as written while its content is silently altered.
 #' @details It's important that the input table and the database table share the same schema (matching names and types). \code{insertq} uses parameterized, chunked, transactional INSERTs; \code{insert_table_local} uses \code{dbWriteTable} with optional load_data_local_infile support (bulk load, no transactional batching or duplicate-key control).
+#'
+#'   Errors are logged and then rethrown, as in \code{insert_table}. Note there is no
+#'   \code{nolog} counterpart here, so the error log cannot be suppressed.
+#'
+#'   Because there is no transaction, \strong{a failed call may have written a prefix of the
+#'   data}: the chunked path commits each batch as it goes, so a failure on a later chunk leaves
+#'   the earlier ones in the table. The logged error reports how many rows landed, but that count
+#'   is a \strong{lower bound}, not an exact figure: it only counts rows from batches that
+#'   completed, and \code{written} is assigned after \code{dbWriteTable} returns, so a batch that
+#'   fails part-way through may itself have committed rows on an engine that cannot roll back
+#'   (e.g. MyISAM) without those rows being counted. \code{R/modify.R}'s \code{.upsert_row_by_row}
+#'   documents the same non-rollback hazard for the upsert path, and counts exactly by writing one
+#'   row at a time -- a much larger change than this function makes. A caller deciding whether a
+#'   re-run is safe must therefore tolerate rows already present rather than assume the reported
+#'   count is exact.
+#' @section Warning: \code{use_file=TRUE} inserts via \code{LOAD DATA LOCAL INFILE}, which does
+#'   \strong{not} honour \code{STRICT_TRANS_TABLES}. Verified on InnoDB under
+#'   \code{STRICT_TRANS_TABLES}: a value too long for its column is silently truncated, and an
+#'   invalid value is silently coerced, with \emph{no error or warning reaching R} -- the call
+#'   reports success and the reported row count is the full count, exactly as if every value had
+#'   been valid. The log-and-rethrow contract documented above does \strong{not} protect this
+#'   path: there is nothing to rethrow, because MariaDB itself does not report it as an error.
+#'   This is not fixed by this function's error handling; detecting it would need inspecting
+#'   \code{SHOW WARNINGS} after every load, which is unimplemented.
 #' @seealso pull_data, selectq, insert_table, insertq
 #' @export
 #' @examples
 #' \dontrun{
-#'   data <- insert_table_local(iris, "iris")
-#'   data <- insert_table_local(iris, "iris", preface_queries="SET session rocksdb_bulk_load=1")
+#'   insert_table_local(iris, "iris")
+#'   n <- insert_table_local(iris, "iris", preface_queries="SET session rocksdb_bulk_load=1")
 #' }
 insert_table_local <- function(table, table_name_in_base, preface_queries=character(0), split_threshold=1e5, use_file=FALSE) {
   creds <- resolve_credentials()
   table <- as.data.frame(table)
   table <- normalize_table_utf8(table)
+  # An empty table has nothing to write, but left unguarded it still opens a connection, runs
+  # preface_queries, and -- against a missing target table -- CREATES that table as a side effect
+  # of what was supposed to be a no-op call. Return before any of that happens.
+  #
+  # No logwarn() here, unlike insert_table()'s equivalent guard: that one is wrapped in
+  # `if (!nolog)`, and insert_table_local deliberately has no nolog parameter (see the roxygen),
+  # so a verbatim copy would import a warning no caller could silence -- and most of the 141
+  # mega callers are per-batch loops, where an unsilenceable per-call warning would spam the log.
+  if (nrow(table) == 0L) return(invisible(0L))
+  # split_threshold <= 0 is an infinite loop below: end <- min(nrow, start + split_threshold - 1)
+  # never exceeds start - 1, so start <- end + 1 never advances and seq(start, end) counts
+  # DOWNWARDS, re-writing row `start` forever with `written` pinned at 0L. Reproduced: a
+  # split_threshold=0 call against a non-empty table hung (had to be killed) and left 606
+  # duplicate rows after ~8 seconds. insert_table() already clamps its equivalent chunk_size.
+  split_threshold <- max(1L, as.integer(split_threshold))
   con <- NULL
+  # Counts rows actually written. It serves two purposes -- the return value on success, and the
+  # "how much landed" figure the error path reports -- so the two cannot disagree.
+  written <- 0L
   tryCatch({
     con <- .maria_connect(creds$host, creds$port, creds$db, creds$user, creds$pwd, local_infile = use_file)
     if (length(preface_queries) > 0) {
-      for (pq in preface_queries) RMariaDB::dbExecute(con, pq)
+      for (pq in preface_queries) {
+        # A preface query (e.g. "SET session rocksdb_bulk_load=1") shares the outer handler with
+        # the INSERT itself, so a malformed one used to log as though the INSERT had failed --
+        # "Error while inserting data into table t (0 of 3 rows written): <SQL syntax error>" --
+        # with nothing to tell a 2am reader it was the preface, not the insert. Name it here and
+        # let it propagate; the outer handler still logs and rethrows it.
+        tryCatch(
+          RMariaDB::dbExecute(con, pq),
+          error = function(e) {
+            stop(sprintf("preface query failed (%s): %s", pq, conditionMessage(e)), call. = FALSE)
+          }
+        )
+      }
     }
     if (nrow(table) >= split_threshold) {
       start <- 1
       while (start <= nrow(table)) {
         end <- min(nrow(table), start + split_threshold - 1)
         RMariaDB::dbWriteTable(con, table_name_in_base, table[seq(start, end), , drop = FALSE], append = TRUE)
+        written <- written + as.integer(end - start + 1)
         start <- end + 1
       }
     } else {
       RMariaDB::dbWriteTable(con, table_name_in_base, table, append = TRUE)
+      written <- as.integer(nrow(table))
     }
   }, error = function(e) {
-    logging::logerror("Error while inserting data into table %s: %s", table_name_in_base, conditionMessage(e), logger = LOGGER.MAIN)
+    # Log AND rethrow, matching insert_table(). Swallowing made a failed INSERT
+    # indistinguishable from a successful one twice over: no condition reached the caller, and
+    # because this tryCatch was the function's last expression, the returned value was
+    # logerror()'s -- which is TRUE.
+    #
+    # `written` is reported because this function is NOT transactional -- insert_table_local does
+    # not use dbWithTransaction -- so a failure part-way through the chunked path leaves the
+    # earlier chunks committed. But it is a LOWER BOUND, not an exact count: it is only
+    # incremented after dbWriteTable() returns, so a batch that fails part-way through may itself
+    # have committed rows (on a non-rollback engine such as MyISAM) that are never added to it.
+    # A caller deciding whether a re-run is safe must tolerate rows already present rather than
+    # trust this number as exact.
+    logging::logerror("Error while inserting data into table %s (%s of %s rows written): %s",
+                      table_name_in_base, written, nrow(table), conditionMessage(e), logger = LOGGER.MAIN)
+    stop(e)
   }, finally = {
-    if (!is.null(con)) RMariaDB::dbDisconnect(con)
+    # try(), not a bare call: if dbDisconnect() itself throws (e.g. a bulk-load flush failing at
+    # disconnect -- the roxygen's own documented preface_queries="SET session rocksdb_bulk_load=1"
+    # flushes here), a finally-block error REPLACES the condition being propagated by error=/stop(e)
+    # above. The caller would see "disconnect failed" instead of the insert error that actually
+    # matters, after `written` was already counted and logged correctly. Same precedent as
+    # .upsert_row_by_row's on.exit(try(dbClearResult(...), silent = TRUE)) in R/modify.R.
+    if (!is.null(con)) try(RMariaDB::dbDisconnect(con), silent = TRUE)
   })
+  invisible(written)
 }
 
 insert_source_full_file <- function(src, host="localhost", port=3306, db, user, password) {

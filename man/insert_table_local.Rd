@@ -21,18 +21,54 @@ insert_table_local(
 
 \item{split_threshold}{integer, number of rows to split the data into smaller groups. Default is 1e5.}
 
-\item{use_file}{logical; if TRUE, enables the load_data_local_infile flag on the connection (needed for some server configs). Default FALSE.}
+\item{use_file}{logical; if TRUE, enables the load_data_local_infile flag on the connection (needed for some server configs). Default FALSE. \strong{Requires the \code{readr} package}: RMariaDB delegates the temp-file write to it, so on an installation without \code{readr} this path errors with \code{"`load_data_local_infile = TRUE` requires the readr package"} before reaching the server. It is under Suggests rather than Imports because it is needed only for this one argument.}
+}
+\value{
+(invisibly) the number of rows written, which on success equals \code{nrow(table)}.
+  This differs from \code{insert_table}, which returns the affected count and can report fewer
+  rows than supplied when \code{ignore=TRUE} skips duplicates. \code{insert_table_local} has no
+  IGNORE path -- a duplicate key raises rather than being skipped -- so a successful call
+  \strong{accepted} every row it was given. That is a count of rows accepted, not a guarantee
+  that every row's values survived intact: see the \code{use_file} warning below for a
+  documented case where a row is counted as written while its content is silently altered.
 }
 \description{
 Simple method that inserts the input data.frame or data.table into the designated table in the current DB context.
 }
 \details{
 It's important that the input table and the database table share the same schema (matching names and types). \code{insertq} uses parameterized, chunked, transactional INSERTs; \code{insert_table_local} uses \code{dbWriteTable} with optional load_data_local_infile support (bulk load, no transactional batching or duplicate-key control).
+
+  Errors are logged and then rethrown, as in \code{insert_table}. Note there is no
+  \code{nolog} counterpart here, so the error log cannot be suppressed.
+
+  Because there is no transaction, \strong{a failed call may have written a prefix of the
+  data}: the chunked path commits each batch as it goes, so a failure on a later chunk leaves
+  the earlier ones in the table. The logged error reports how many rows landed, but that count
+  is a \strong{lower bound}, not an exact figure: it only counts rows from batches that
+  completed, and \code{written} is assigned after \code{dbWriteTable} returns, so a batch that
+  fails part-way through may itself have committed rows on an engine that cannot roll back
+  (e.g. MyISAM) without those rows being counted. \code{R/modify.R}'s \code{.upsert_row_by_row}
+  documents the same non-rollback hazard for the upsert path, and counts exactly by writing one
+  row at a time -- a much larger change than this function makes. A caller deciding whether a
+  re-run is safe must therefore tolerate rows already present rather than assume the reported
+  count is exact.
 }
+\section{Warning}{
+ \code{use_file=TRUE} inserts via \code{LOAD DATA LOCAL INFILE}, which does
+  \strong{not} honour \code{STRICT_TRANS_TABLES}. Verified on InnoDB under
+  \code{STRICT_TRANS_TABLES}: a value too long for its column is silently truncated, and an
+  invalid value is silently coerced, with \emph{no error or warning reaching R} -- the call
+  reports success and the reported row count is the full count, exactly as if every value had
+  been valid. The log-and-rethrow contract documented above does \strong{not} protect this
+  path: there is nothing to rethrow, because MariaDB itself does not report it as an error.
+  This is not fixed by this function's error handling; detecting it would need inspecting
+  \code{SHOW WARNINGS} after every load, which is unimplemented.
+}
+
 \examples{
 \dontrun{
-  data <- insert_table_local(iris, "iris")
-  data <- insert_table_local(iris, "iris", preface_queries="SET session rocksdb_bulk_load=1")
+  insert_table_local(iris, "iris")
+  n <- insert_table_local(iris, "iris", preface_queries="SET session rocksdb_bulk_load=1")
 }
 }
 \seealso{
