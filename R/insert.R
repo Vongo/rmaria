@@ -48,6 +48,12 @@ insert_table_local <- function(table, table_name_in_base, preface_queries=charac
   creds <- resolve_credentials()
   table <- as.data.frame(table)
   table <- normalize_table_utf8(table)
+  # split_threshold <= 0 is an infinite loop below: end <- min(nrow, start + split_threshold - 1)
+  # never exceeds start - 1, so start <- end + 1 never advances and seq(start, end) counts
+  # DOWNWARDS, re-writing row `start` forever with `written` pinned at 0L. Reproduced: a
+  # split_threshold=0 call against a non-empty table hung (had to be killed) and left 606
+  # duplicate rows after ~8 seconds. insert_table() already clamps its equivalent chunk_size.
+  split_threshold <- max(1L, as.integer(split_threshold))
   con <- NULL
   # Counts rows actually written. It serves two purposes -- the return value on success, and the
   # "how much landed" figure the error path reports -- so the two cannot disagree.

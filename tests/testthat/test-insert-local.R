@@ -250,3 +250,27 @@ test_that("use_file=TRUE truncates silently under STRICT_TRANS_TABLES on InnoDB 
                    query = "SELECT id, v FROM t_local_usefile", verbose = FALSE)
   expect_equal(got$v, "WAY")   # silently truncated to the column's VARCHAR(3) width
 })
+
+test_that("a zero or negative split_threshold does not hang, and writes each row exactly once", {
+  # split_threshold <= 0 used to be an infinite loop: end <- min(nrow, start + split_threshold - 1)
+  # never advances past start - 1, so the while loop re-writes row `start` forever. If the clamp
+  # regresses, this test does not fail cleanly -- it HANGS the suite, which is the whole reason the
+  # clamp exists. The row-count assertion below is what catches a narrower regression (e.g. the
+  # clamp floor moved) without needing the hang itself as the signal.
+  skip_if_no_db(); e <- db_env()
+  DB <- e$db; HOST <- e$host; USER <- e$user; PWD <- e$pwd; PORT <- e$port
+  con <- test_con()
+  RMariaDB::dbExecute(con, "DROP TABLE IF EXISTS t_local_zerothr")
+  RMariaDB::dbExecute(con, "CREATE TABLE t_local_zerothr (id INT)")
+  on.exit(RMariaDB::dbExecute(con, "DROP TABLE IF EXISTS t_local_zerothr"), add = TRUE)
+  on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+
+  for (thr in c(0L, -5L)) {
+    RMariaDB::dbExecute(con, "TRUNCATE TABLE t_local_zerothr")
+    got_n <- insert_table_local(data.frame(id = 1:3), "t_local_zerothr", split_threshold = thr)
+    expect_equal(got_n, 3L)
+    got <- pull_data(host = HOST, port = PORT, db = DB, user = USER, password = PWD,
+                     query = "SELECT id FROM t_local_zerothr ORDER BY id", verbose = FALSE)
+    expect_equal(got$id, 1:3)   # not duplicated, not stuck on row 1
+  }
+})
