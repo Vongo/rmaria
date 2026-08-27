@@ -200,11 +200,24 @@ test_that("the connection is released even when the insert fails", {
   RMariaDB::dbExecute(con, "CREATE TABLE t_local_leak (id INT, v VARCHAR(3))")
   on.exit(RMariaDB::dbExecute(con, "DROP TABLE IF EXISTS t_local_leak"), add = TRUE)
   on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
-  # The `finally` disconnect must survive the rethrow. Fail repeatedly, then succeed: if the
-  # failed calls leaked connections this would eventually exhaust max_connections instead.
+
+  # The `finally` disconnect must survive the rethrow. A "fail 25 times, then succeed once" version
+  # of this test was VACUOUS: max_connections is 151, so 25 leaks could never exhaust it, and R's
+  # GC reclaims orphaned handles anyway (verified by mutation: deleting the `finally` disconnect
+  # entirely still passed the old assertion). Read the server's own connection count instead, on a
+  # separate probe connection so the probe itself is not what moves the number.
+  threads_connected <- function() {
+    probe <- test_con()
+    on.exit(RMariaDB::dbDisconnect(probe), add = TRUE)
+    as.integer(RMariaDB::dbGetQuery(probe, "SHOW STATUS LIKE 'Threads_connected'")$Value)
+  }
+  before <- threads_connected()
   for (i in 1:25) {
     expect_error(insert_table_local(data.frame(id = 1L, v = "WAY-TOO-LONG"), "t_local_leak"))
   }
+  after <- threads_connected()
+  expect_lte(after, before)
+
   expect_equal(insert_table_local(data.frame(id = 2L, v = "ok"), "t_local_leak"), 1L)
 })
 
