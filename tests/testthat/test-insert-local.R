@@ -232,7 +232,14 @@ test_that("use_file=TRUE truncates silently under STRICT_TRANS_TABLES on InnoDB 
   # nothing to rethrow, because MariaDB itself never reports it as an error. Recorded here so it
   # cannot drift unnoticed -- NOT because it is obviously right. Detecting it would need
   # inspecting SHOW WARNINGS after every load, which is its own change with its own risk.
-  skip_if_no_db(); e <- db_env()
+  skip_if_no_db()
+  # use_file=TRUE routes through RMariaDB's load_data_local_infile path, which delegates the
+  # temp-file write to readr. readr is not a dependency of this package -- see the roxygen note
+  # on `use_file` -- so on a bare install this whole path errors with "requires the readr
+  # package" before ever reaching MariaDB. CI has no readr; a tidyverse-equipped dev machine
+  # does, which is exactly how this test passed locally and failed on CI.
+  skip_if_not_installed("readr")
+  e <- db_env()
   DB <- e$db; HOST <- e$host; USER <- e$user; PWD <- e$pwd; PORT <- e$port
   con <- test_con()
   RMariaDB::dbExecute(con, "DROP TABLE IF EXISTS t_local_usefile")

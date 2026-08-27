@@ -5,7 +5,7 @@
 #' @param table_name_in_base table in \code{db} to insert data into
 #' @param preface_queries character vector of queries you want to apply before, typically setting session variables.
 #' @param split_threshold integer, number of rows to split the data into smaller groups. Default is 1e5.
-#' @param use_file logical; if TRUE, enables the load_data_local_infile flag on the connection (needed for some server configs). Default FALSE.
+#' @param use_file logical; if TRUE, enables the load_data_local_infile flag on the connection (needed for some server configs). Default FALSE. \strong{Requires the \code{readr} package}: RMariaDB delegates the temp-file write to it, so on an installation without \code{readr} this path errors with \code{"`load_data_local_infile = TRUE` requires the readr package"} before reaching the server. It is under Suggests rather than Imports because it is needed only for this one argument.
 #' @keywords MariaDB insert
 #' @return (invisibly) the number of rows written, which on success equals \code{nrow(table)}.
 #'   This differs from \code{insert_table}, which returns the affected count and can report fewer
