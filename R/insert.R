@@ -7,19 +7,35 @@
 #' @param split_threshold integer, number of rows to split the data into smaller groups. Default is 1e5.
 #' @param use_file logical; if TRUE, enables the load_data_local_infile flag on the connection (needed for some server configs). Default FALSE.
 #' @keywords MariaDB insert
+#' @return (invisibly) the number of rows written, which on success equals \code{nrow(table)}.
+#'   This differs from \code{insert_table}, which returns the affected count and can report fewer
+#'   rows than supplied when \code{ignore=TRUE} skips duplicates. \code{insert_table_local} has no
+#'   IGNORE path -- a duplicate key raises rather than being skipped -- so a successful call wrote
+#'   every row it was given.
 #' @details It's important that the input table and the database table share the same schema (matching names and types). \code{insertq} uses parameterized, chunked, transactional INSERTs; \code{insert_table_local} uses \code{dbWriteTable} with optional load_data_local_infile support (bulk load, no transactional batching or duplicate-key control).
+#'
+#'   Errors are logged and then rethrown, as in \code{insert_table}. Note there is no
+#'   \code{nolog} counterpart here, so the error log cannot be suppressed.
+#'
+#'   Because there is no transaction, \strong{a failed call may have written a prefix of the
+#'   data}: the chunked path commits each batch as it goes, so a failure on a later chunk leaves
+#'   the earlier ones in the table. The logged error reports how many rows landed before the
+#'   failure, which is what you need to decide whether re-running is safe.
 #' @seealso pull_data, selectq, insert_table, insertq
 #' @export
 #' @examples
 #' \dontrun{
-#'   data <- insert_table_local(iris, "iris")
-#'   data <- insert_table_local(iris, "iris", preface_queries="SET session rocksdb_bulk_load=1")
+#'   insert_table_local(iris, "iris")
+#'   n <- insert_table_local(iris, "iris", preface_queries="SET session rocksdb_bulk_load=1")
 #' }
 insert_table_local <- function(table, table_name_in_base, preface_queries=character(0), split_threshold=1e5, use_file=FALSE) {
   creds <- resolve_credentials()
   table <- as.data.frame(table)
   table <- normalize_table_utf8(table)
   con <- NULL
+  # Counts rows actually written. It serves two purposes -- the return value on success, and the
+  # "how much landed" figure the error path reports -- so the two cannot disagree.
+  written <- 0L
   tryCatch({
     con <- .maria_connect(creds$host, creds$port, creds$db, creds$user, creds$pwd, local_infile = use_file)
     if (length(preface_queries) > 0) {
@@ -30,16 +46,29 @@ insert_table_local <- function(table, table_name_in_base, preface_queries=charac
       while (start <= nrow(table)) {
         end <- min(nrow(table), start + split_threshold - 1)
         RMariaDB::dbWriteTable(con, table_name_in_base, table[seq(start, end), , drop = FALSE], append = TRUE)
+        written <- written + as.integer(end - start + 1)
         start <- end + 1
       }
     } else {
       RMariaDB::dbWriteTable(con, table_name_in_base, table, append = TRUE)
+      written <- as.integer(nrow(table))
     }
   }, error = function(e) {
-    logging::logerror("Error while inserting data into table %s: %s", table_name_in_base, conditionMessage(e), logger = LOGGER.MAIN)
+    # Log AND rethrow, matching insert_table(). Swallowing made a failed INSERT
+    # indistinguishable from a successful one twice over: no condition reached the caller, and
+    # because this tryCatch was the function's last expression, the returned value was
+    # logerror()'s -- which is TRUE.
+    #
+    # `written` is reported because this function is NOT transactional -- dbWithTransaction is
+    # used only by insert_table -- so a failure part-way through the chunked path leaves the
+    # earlier chunks committed. A caller deciding whether a re-run is safe needs that number.
+    logging::logerror("Error while inserting data into table %s (%s of %s rows written): %s",
+                      table_name_in_base, written, nrow(table), conditionMessage(e), logger = LOGGER.MAIN)
+    stop(e)
   }, finally = {
     if (!is.null(con)) RMariaDB::dbDisconnect(con)
   })
+  invisible(written)
 }
 
 insert_source_full_file <- function(src, host="localhost", port=3306, db, user, password) {

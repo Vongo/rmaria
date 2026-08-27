@@ -23,16 +23,31 @@ insert_table_local(
 
 \item{use_file}{logical; if TRUE, enables the load_data_local_infile flag on the connection (needed for some server configs). Default FALSE.}
 }
+\value{
+(invisibly) the number of rows written, which on success equals \code{nrow(table)}.
+  This differs from \code{insert_table}, which returns the affected count and can report fewer
+  rows than supplied when \code{ignore=TRUE} skips duplicates. \code{insert_table_local} has no
+  IGNORE path -- a duplicate key raises rather than being skipped -- so a successful call wrote
+  every row it was given.
+}
 \description{
 Simple method that inserts the input data.frame or data.table into the designated table in the current DB context.
 }
 \details{
 It's important that the input table and the database table share the same schema (matching names and types). \code{insertq} uses parameterized, chunked, transactional INSERTs; \code{insert_table_local} uses \code{dbWriteTable} with optional load_data_local_infile support (bulk load, no transactional batching or duplicate-key control).
+
+  Errors are logged and then rethrown, as in \code{insert_table}. Note there is no
+  \code{nolog} counterpart here, so the error log cannot be suppressed.
+
+  Because there is no transaction, \strong{a failed call may have written a prefix of the
+  data}: the chunked path commits each batch as it goes, so a failure on a later chunk leaves
+  the earlier ones in the table. The logged error reports how many rows landed before the
+  failure, which is what you need to decide whether re-running is safe.
 }
 \examples{
 \dontrun{
-  data <- insert_table_local(iris, "iris")
-  data <- insert_table_local(iris, "iris", preface_queries="SET session rocksdb_bulk_load=1")
+  insert_table_local(iris, "iris")
+  n <- insert_table_local(iris, "iris", preface_queries="SET session rocksdb_bulk_load=1")
 }
 }
 \seealso{
