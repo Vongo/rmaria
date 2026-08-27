@@ -173,6 +173,25 @@ test_that("the reported count is a FLOOR: a failing batch may have committed row
   expect_equal(got$id, 1L)
 })
 
+test_that("a malformed preface query is named as such, not mistaken for the INSERT failing", {
+  skip_if_no_db(); e <- db_env()
+  DB <- e$db; HOST <- e$host; USER <- e$user; PWD <- e$pwd; PORT <- e$port
+  con <- test_con()
+  RMariaDB::dbExecute(con, "DROP TABLE IF EXISTS t_local_preface")
+  RMariaDB::dbExecute(con, "CREATE TABLE t_local_preface (id INT)")
+  on.exit(RMariaDB::dbExecute(con, "DROP TABLE IF EXISTS t_local_preface"), add = TRUE)
+  on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+  # A malformed preface query used to share the outer handler with the INSERT itself, so the
+  # logged/thrown message read as though the row data had failed to insert. Pin that it now
+  # identifies itself as a preface query and names the offending one.
+  msg <- tryCatch({
+    insert_table_local(data.frame(id = 1L), "t_local_preface", preface_queries = "THIS IS NOT SQL")
+    NA_character_
+  }, error = function(e) conditionMessage(e))
+  expect_match(msg, "preface query failed", fixed = TRUE)
+  expect_match(msg, "THIS IS NOT SQL", fixed = TRUE)
+})
+
 test_that("the connection is released even when the insert fails", {
   skip_if_no_db(); e <- db_env()
   DB <- e$db; HOST <- e$host; USER <- e$user; PWD <- e$pwd; PORT <- e$port

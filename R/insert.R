@@ -46,7 +46,19 @@ insert_table_local <- function(table, table_name_in_base, preface_queries=charac
   tryCatch({
     con <- .maria_connect(creds$host, creds$port, creds$db, creds$user, creds$pwd, local_infile = use_file)
     if (length(preface_queries) > 0) {
-      for (pq in preface_queries) RMariaDB::dbExecute(con, pq)
+      for (pq in preface_queries) {
+        # A preface query (e.g. "SET session rocksdb_bulk_load=1") shares the outer handler with
+        # the INSERT itself, so a malformed one used to log as though the INSERT had failed --
+        # "Error while inserting data into table t (0 of 3 rows written): <SQL syntax error>" --
+        # with nothing to tell a 2am reader it was the preface, not the insert. Name it here and
+        # let it propagate; the outer handler still logs and rethrows it.
+        tryCatch(
+          RMariaDB::dbExecute(con, pq),
+          error = function(e) {
+            stop(sprintf("preface query failed (%s): %s", pq, conditionMessage(e)), call. = FALSE)
+          }
+        )
+      }
     }
     if (nrow(table) >= split_threshold) {
       start <- 1
