@@ -45,16 +45,18 @@ In `mega`, `insert_domain_aggregate()` sets `success <- FALSE`, calls `insert_ta
 
 ### 1.3 Measured blast radius
 
-In `mega/src`:
+In `mega/src`, re-derived so all four numbers come from the same, consistent basis (the
+previous pass mixed three different grep patterns and was internally inconsistent: 141 + 0 did
+not equal the claimed 147):
 
-| measurement | value |
-|---|---|
-| files calling `insert_table_local` | 67 |
-| call sites | 147 |
-| bare calls (return discarded) | 141 |
-| **call sites using the return value** | **0** |
+| measurement | value | grep basis |
+|---|---|---|
+| files containing a call | 63 | `grep -rl "insert_table_local(" src/ \| wc -l` |
+| call lines | 141 | `grep -rn "insert_table_local(" src/ \| wc -l` |
+| call sites assigning the result | 0 | `grep -rnE "<-\s*insert_table_local\(\|=\s*insert_table_local\(" src/ \| wc -l` |
+| call sites piping the result | 0 | `grep -rnE "insert_table_local\([^)]*\)\s*%>%\|%>%\s*insert_table_local\(\|\|>\s*insert_table_local\(\|insert_table_local\([^)]*\)\s*\|>" src/ \| wc -l` |
 
-`rutils` has no callers.
+Nobody uses the return value: every call is bare. `rutils` has no callers.
 
 Nobody reads the return today. That makes the return half of this change purely additive; the throwing half is where the risk sits.
 
@@ -148,7 +150,7 @@ Consequences to expect on the first run after reinstall:
 
 - jobs whose inserts have been failing silently will begin failing loudly — the intended outcome, but it will look like a regression to anyone who does not know this landed
 - any caller already wrapping the call in `tryCatch` absorbs the throw and behaves as before
-- 48 of the 67 calling files contain a `tryCatch` somewhere, though not necessarily around the insert
+- 48 of the 63 calling files contain a `tryCatch` somewhere, though not necessarily around the insert
 
 ## 6. Downstream follow-up (not this repo)
 
