@@ -27,8 +27,10 @@ insert_table_local(
 (invisibly) the number of rows written, which on success equals \code{nrow(table)}.
   This differs from \code{insert_table}, which returns the affected count and can report fewer
   rows than supplied when \code{ignore=TRUE} skips duplicates. \code{insert_table_local} has no
-  IGNORE path -- a duplicate key raises rather than being skipped -- so a successful call wrote
-  every row it was given.
+  IGNORE path -- a duplicate key raises rather than being skipped -- so a successful call
+  \strong{accepted} every row it was given. That is a count of rows accepted, not a guarantee
+  that every row's values survived intact: see the \code{use_file} warning below for a
+  documented case where a row is counted as written while its content is silently altered.
 }
 \description{
 Simple method that inserts the input data.frame or data.table into the designated table in the current DB context.

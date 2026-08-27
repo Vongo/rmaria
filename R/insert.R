@@ -10,8 +10,10 @@
 #' @return (invisibly) the number of rows written, which on success equals \code{nrow(table)}.
 #'   This differs from \code{insert_table}, which returns the affected count and can report fewer
 #'   rows than supplied when \code{ignore=TRUE} skips duplicates. \code{insert_table_local} has no
-#'   IGNORE path -- a duplicate key raises rather than being skipped -- so a successful call wrote
-#'   every row it was given.
+#'   IGNORE path -- a duplicate key raises rather than being skipped -- so a successful call
+#'   \strong{accepted} every row it was given. That is a count of rows accepted, not a guarantee
+#'   that every row's values survived intact: see the \code{use_file} warning below for a
+#'   documented case where a row is counted as written while its content is silently altered.
 #' @details It's important that the input table and the database table share the same schema (matching names and types). \code{insertq} uses parameterized, chunked, transactional INSERTs; \code{insert_table_local} uses \code{dbWriteTable} with optional load_data_local_infile support (bulk load, no transactional batching or duplicate-key control).
 #'
 #'   Errors are logged and then rethrown, as in \code{insert_table}. Note there is no
