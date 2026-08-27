@@ -121,8 +121,21 @@ test_that("a mid-chunk failure raises AND leaves the earlier chunks committed", 
   RMariaDB::dbExecute(con, "CREATE TABLE t_local_partial (id INT, v VARCHAR(3))")
   on.exit(RMariaDB::dbExecute(con, "DROP TABLE IF EXISTS t_local_partial"), add = TRUE)
   on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+
+  # Capture the logged error so its reported count is itself asserted -- nothing previously
+  # checked the message content, which let two independent mutations of `written` (incrementing
+  # before dbWriteTable() rather than after, and logging nrow(table) instead of `written`) escape
+  # the suite untouched. Pattern matches test-log-truncation.R's capture handler.
+  captured <- character(0)
+  capture_written_count <- function(msg, handler, ...) {
+    if (isTRUE(list(...)$dry)) return(TRUE)   # logging:: probes handlers with dry=TRUE
+    captured <<- c(captured, msg)
+  }
+  logging::addHandler(capture_written_count, level = "ERROR", logger = "com.vongo.rmaria")
+  on.exit(logging::removeHandler("capture_written_count", logger = "com.vongo.rmaria"), add = TRUE)
+
   # split_threshold=1 puts each row in its own write; row 2 violates VARCHAR(3).
-  # This function is NOT transactional -- dbWithTransaction is used only by insert_table -- so
+  # This function is NOT transactional -- insert_table_local does not use dbWithTransaction -- so
   # row 1 is already committed when row 2 raises. That is the documented behaviour, pinned here
   # so nobody later assumes a failed call wrote nothing.
   expect_error(insert_table_local(
@@ -131,6 +144,11 @@ test_that("a mid-chunk failure raises AND leaves the earlier chunks committed", 
   got <- pull_data(host = HOST, port = PORT, db = DB, user = USER, password = PWD,
                    query = "SELECT id FROM t_local_partial ORDER BY id", verbose = FALSE)
   expect_equal(got$id, 1L)
+
+  # Exactly 1, not 0 (the pre-fix state that motivated this whole PR) and not 3 (the full total,
+  # which either mutation above would report instead of the true in-progress count).
+  expect_length(captured, 1L)
+  expect_match(captured, "(1 of 3 rows written)", fixed = TRUE)
 })
 
 test_that("the reported count is a FLOOR: a failing batch may have committed rows it does not count", {
