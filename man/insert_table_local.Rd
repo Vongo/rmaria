@@ -51,6 +51,18 @@ It's important that the input table and the database table share the same schema
   re-run is safe must therefore tolerate rows already present rather than assume the reported
   count is exact.
 }
+\section{Warning}{
+ \code{use_file=TRUE} inserts via \code{LOAD DATA LOCAL INFILE}, which does
+  \strong{not} honour \code{STRICT_TRANS_TABLES}. Verified on InnoDB under
+  \code{STRICT_TRANS_TABLES}: a value too long for its column is silently truncated, and an
+  invalid value is silently coerced, with \emph{no error or warning reaching R} -- the call
+  reports success and the reported row count is the full count, exactly as if every value had
+  been valid. The log-and-rethrow contract documented above does \strong{not} protect this
+  path: there is nothing to rethrow, because MariaDB itself does not report it as an error.
+  This is not fixed by this function's error handling; detecting it would need inspecting
+  \code{SHOW WARNINGS} after every load, which is unimplemented.
+}
+
 \examples{
 \dontrun{
   insert_table_local(iris, "iris")

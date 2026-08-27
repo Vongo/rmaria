@@ -207,3 +207,33 @@ test_that("the connection is released even when the insert fails", {
   }
   expect_equal(insert_table_local(data.frame(id = 2L, v = "ok"), "t_local_leak"), 1L)
 })
+
+test_that("use_file=TRUE truncates silently under STRICT_TRANS_TABLES on InnoDB -- pinned, not endorsed", {
+  # LOAD DATA LOCAL INFILE (what use_file=TRUE uses) does not honour STRICT_TRANS_TABLES: an
+  # over-long value is truncated rather than raising, no warning reaches R, and the call reports
+  # success with the full row count -- exactly as if the value had been valid. Verified against
+  # MariaDB 11 under STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION on
+  # InnoDB, i.e. the exact configuration the roxygen documents as the intended bulk-load usage.
+  #
+  # This is pre-existing behaviour, NOT fixed by this PR's log-and-rethrow contract -- there is
+  # nothing to rethrow, because MariaDB itself never reports it as an error. Recorded here so it
+  # cannot drift unnoticed -- NOT because it is obviously right. Detecting it would need
+  # inspecting SHOW WARNINGS after every load, which is its own change with its own risk.
+  skip_if_no_db(); e <- db_env()
+  DB <- e$db; HOST <- e$host; USER <- e$user; PWD <- e$pwd; PORT <- e$port
+  con <- test_con()
+  RMariaDB::dbExecute(con, "DROP TABLE IF EXISTS t_local_usefile")
+  RMariaDB::dbExecute(con, "CREATE TABLE t_local_usefile (id INT, v VARCHAR(3)) ENGINE=InnoDB")
+  on.exit(RMariaDB::dbExecute(con, "DROP TABLE IF EXISTS t_local_usefile"), add = TRUE)
+  on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+
+  got_n <- NA_integer_
+  expect_no_error(got_n <- insert_table_local(
+    data.frame(id = 1L, v = "WAY-TOO-LONG", stringsAsFactors = FALSE),
+    "t_local_usefile", use_file = TRUE))
+  expect_equal(got_n, 1L)   # reports full success -- no signal anything was wrong
+
+  got <- pull_data(host = HOST, port = PORT, db = DB, user = USER, password = PWD,
+                   query = "SELECT id, v FROM t_local_usefile", verbose = FALSE)
+  expect_equal(got$v, "WAY")   # silently truncated to the column's VARCHAR(3) width
+})
