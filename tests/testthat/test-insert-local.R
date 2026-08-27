@@ -274,3 +274,20 @@ test_that("a zero or negative split_threshold does not hang, and writes each row
     expect_equal(got$id, 1:3)   # not duplicated, not stuck on row 1
   }
 })
+
+test_that("an empty table returns early: 0L, no connection side effects, no table created", {
+  # Unguarded, an empty input still opened a connection, ran preface_queries, and -- against a
+  # missing target -- CREATED that table as a side effect of what should be a no-op. Pin all three.
+  skip_if_no_db(); e <- db_env()
+  DB <- e$db; HOST <- e$host; USER <- e$user; PWD <- e$pwd; PORT <- e$port
+  con <- test_con()
+  RMariaDB::dbExecute(con, "DROP TABLE IF EXISTS t_local_empty_absent")
+  on.exit(RMariaDB::dbExecute(con, "DROP TABLE IF EXISTS t_local_empty_absent"), add = TRUE)
+  on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+
+  # A malformed preface query would raise if the preface loop ran at all -- proof the early
+  # return happens before the connection (and the preface loop) is reached.
+  expect_equal(insert_table_local(data.frame(id = integer(0)), "t_local_empty_absent",
+                                  preface_queries = "THIS IS NOT SQL"), 0L)
+  expect_false(RMariaDB::dbExistsTable(con, "t_local_empty_absent"))
+})

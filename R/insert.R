@@ -48,6 +48,15 @@ insert_table_local <- function(table, table_name_in_base, preface_queries=charac
   creds <- resolve_credentials()
   table <- as.data.frame(table)
   table <- normalize_table_utf8(table)
+  # An empty table has nothing to write, but left unguarded it still opens a connection, runs
+  # preface_queries, and -- against a missing target table -- CREATES that table as a side effect
+  # of what was supposed to be a no-op call. Return before any of that happens.
+  #
+  # No logwarn() here, unlike insert_table()'s equivalent guard: that one is wrapped in
+  # `if (!nolog)`, and insert_table_local deliberately has no nolog parameter (see the roxygen),
+  # so a verbatim copy would import a warning no caller could silence -- and most of the 141
+  # mega callers are per-batch loops, where an unsilenceable per-call warning would spam the log.
+  if (nrow(table) == 0L) return(invisible(0L))
   # split_threshold <= 0 is an infinite loop below: end <- min(nrow, start + split_threshold - 1)
   # never exceeds start - 1, so start <- end + 1 never advances and seq(start, end) counts
   # DOWNWARDS, re-writing row `start` forever with `written` pinned at 0L. Reproduced: a
