@@ -19,8 +19,15 @@
 #'
 #'   Because there is no transaction, \strong{a failed call may have written a prefix of the
 #'   data}: the chunked path commits each batch as it goes, so a failure on a later chunk leaves
-#'   the earlier ones in the table. The logged error reports how many rows landed before the
-#'   failure, which is what you need to decide whether re-running is safe.
+#'   the earlier ones in the table. The logged error reports how many rows landed, but that count
+#'   is a \strong{lower bound}, not an exact figure: it only counts rows from batches that
+#'   completed, and \code{written} is assigned after \code{dbWriteTable} returns, so a batch that
+#'   fails part-way through may itself have committed rows on an engine that cannot roll back
+#'   (e.g. MyISAM) without those rows being counted. \code{R/modify.R}'s \code{.upsert_row_by_row}
+#'   documents the same non-rollback hazard for the upsert path, and counts exactly by writing one
+#'   row at a time -- a much larger change than this function makes. A caller deciding whether a
+#'   re-run is safe must therefore tolerate rows already present rather than assume the reported
+#'   count is exact.
 #' @seealso pull_data, selectq, insert_table, insertq
 #' @export
 #' @examples
@@ -59,9 +66,13 @@ insert_table_local <- function(table, table_name_in_base, preface_queries=charac
     # because this tryCatch was the function's last expression, the returned value was
     # logerror()'s -- which is TRUE.
     #
-    # `written` is reported because this function is NOT transactional -- dbWithTransaction is
-    # used only by insert_table -- so a failure part-way through the chunked path leaves the
-    # earlier chunks committed. A caller deciding whether a re-run is safe needs that number.
+    # `written` is reported because this function is NOT transactional -- insert_table_local does
+    # not use dbWithTransaction -- so a failure part-way through the chunked path leaves the
+    # earlier chunks committed. But it is a LOWER BOUND, not an exact count: it is only
+    # incremented after dbWriteTable() returns, so a batch that fails part-way through may itself
+    # have committed rows (on a non-rollback engine such as MyISAM) that are never added to it.
+    # A caller deciding whether a re-run is safe must tolerate rows already present rather than
+    # trust this number as exact.
     logging::logerror("Error while inserting data into table %s (%s of %s rows written): %s",
                       table_name_in_base, written, nrow(table), conditionMessage(e), logger = LOGGER.MAIN)
     stop(e)

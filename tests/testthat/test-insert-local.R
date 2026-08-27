@@ -133,6 +133,28 @@ test_that("a mid-chunk failure raises AND leaves the earlier chunks committed", 
   expect_equal(got$id, 1L)
 })
 
+test_that("the reported count is a FLOOR: a failing batch may have committed rows it does not count", {
+  skip_if_no_db(); e <- db_env()
+  DB <- e$db; HOST <- e$host; USER <- e$user; PWD <- e$pwd; PORT <- e$port
+  con <- test_con()
+  RMariaDB::dbExecute(con, "DROP TABLE IF EXISTS t_local_floor")
+  RMariaDB::dbExecute(con, "CREATE TABLE t_local_floor (id INT, v VARCHAR(3)) ENGINE=MyISAM")
+  on.exit(RMariaDB::dbExecute(con, "DROP TABLE IF EXISTS t_local_floor"), add = TRUE)
+  on.exit(RMariaDB::dbDisconnect(con), add = TRUE)
+  # MyISAM cannot roll back, so dbWriteTable's own multi-row call commits row 1 before row 2
+  # raises -- but `written` is only assigned after the call returns, so it reports 0. The count
+  # is therefore a lower bound, not an exact figure. Pinned so the docs and the behaviour cannot
+  # drift apart; making it exact would need the row-by-row approach .upsert_row_by_row uses.
+  expect_error(insert_table_local(
+    data.frame(id = 1:3, v = c("ok", "WAY-TOO-LONG", "ok3"), stringsAsFactors = FALSE),
+    "t_local_floor"))
+  got <- pull_data(host = HOST, port = PORT, db = DB, user = USER, password = PWD,
+                   query = "SELECT id FROM t_local_floor ORDER BY id", verbose = FALSE)
+  # The logged error reports 0 rows written (asserted by name in the mid-chunk-failure test
+  # below); the table actually holds 1 -- proof the reported count under-reports reality.
+  expect_equal(got$id, 1L)
+})
+
 test_that("the connection is released even when the insert fails", {
   skip_if_no_db(); e <- db_env()
   DB <- e$db; HOST <- e$host; USER <- e$user; PWD <- e$pwd; PORT <- e$port
