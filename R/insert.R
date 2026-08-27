@@ -98,7 +98,13 @@ insert_table_local <- function(table, table_name_in_base, preface_queries=charac
                       table_name_in_base, written, nrow(table), conditionMessage(e), logger = LOGGER.MAIN)
     stop(e)
   }, finally = {
-    if (!is.null(con)) RMariaDB::dbDisconnect(con)
+    # try(), not a bare call: if dbDisconnect() itself throws (e.g. a bulk-load flush failing at
+    # disconnect -- the roxygen's own documented preface_queries="SET session rocksdb_bulk_load=1"
+    # flushes here), a finally-block error REPLACES the condition being propagated by error=/stop(e)
+    # above. The caller would see "disconnect failed" instead of the insert error that actually
+    # matters, after `written` was already counted and logged correctly. Same precedent as
+    # .upsert_row_by_row's on.exit(try(dbClearResult(...), silent = TRUE)) in R/modify.R.
+    if (!is.null(con)) try(RMariaDB::dbDisconnect(con), silent = TRUE)
   })
   invisible(written)
 }
